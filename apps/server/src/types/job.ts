@@ -62,6 +62,12 @@ export interface PreprocessOptions {
   skipPreprocessing: boolean;
 }
 
+export interface DatasetSubsetInput {
+  imageDir: string;
+  triggerWord?: string;
+  repeatCount?: number;
+}
+
 export const defaultPreprocessOptions: PreprocessOptions = {
   runResize: false,
   maxResolution: '1024x1024',
@@ -83,6 +89,7 @@ export interface TrainJobInput {
   datasetDir: string;
   outputDir: string;
   outputName: string;
+  datasetSubsets?: DatasetSubsetInput[];
   sdScriptsDir?: string;
   triggerWord?: string;
   repeatCount?: number;

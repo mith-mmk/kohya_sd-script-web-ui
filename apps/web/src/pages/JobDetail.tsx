@@ -79,6 +79,12 @@ export default function JobDetail() {
   const { t } = useT();
   if (!job) return <div style={{ color: '#666', padding: 40 }}>{t.loading}</div>;
 
+  const datasetDirs = job.input.datasetSubsets?.map(subset => subset.imageDir).filter(Boolean)
+    ?? (job.input.datasetDir ? [job.input.datasetDir] : []);
+  const datasetSummary = datasetDirs.length > 1
+    ? `${datasetDirs[0]} (+${datasetDirs.length - 1})`
+    : (datasetDirs[0] ?? '—');
+
   return (
     <div>
       <Link style={S.back} to="/">{t.backToList}</Link>
@@ -116,7 +122,7 @@ export default function JobDetail() {
           <div style={S.cardTitle}>{t.cardPaths}</div>
           {[
             [t.labelBaseModel, job.input.baseModelPath],
-            [t.labelDataset, job.input.datasetDir],
+            [t.labelDataset, datasetSummary],
             [t.labelOutput, job.input.outputDir],
             [t.labelName, job.input.outputName],
           ].map(([k, v]) => (
@@ -147,7 +153,7 @@ export default function JobDetail() {
 
       {tab === 'console' && <Console events={logs} />}
       {tab === 'params' && <ParamsView params={job.params} />}
-      {tab === 'tags' && <TagEditor datasetDir={job.input.datasetDir} />}
+      {tab === 'tags' && <TagEditor datasetDirs={datasetDirs} />}
     </div>
   );
 }

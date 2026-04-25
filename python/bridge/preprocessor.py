@@ -14,6 +14,57 @@ from typing import Any
 from event_emitter import info, warn, error, parse_and_emit_training_line
 
 
+def _subset_work_key(index: int, image_dir: str) -> str:
+    base_name = Path(image_dir).name or f"subset_{index + 1}"
+    safe_name = "".join(ch if ch.isalnum() else "_" for ch in base_name).strip("_")
+    if not safe_name:
+        safe_name = f"subset_{index + 1}"
+    return f"{index + 1:02d}_{safe_name}"
+
+
+def _resolve_dataset_subsets(config: dict[str, Any]) -> list[dict[str, Any]]:
+    dataset_subsets: list[dict[str, Any]] = []
+    for index, raw_subset in enumerate(config.get("datasetSubsets") or []):
+        image_dir = str(raw_subset.get("imageDir") or "").strip()
+        if not image_dir:
+            continue
+        subset_name = Path(image_dir).name or f"subset_{index + 1}"
+        dataset_subsets.append(
+            {
+                "imageDir": image_dir,
+                "triggerWord": str(raw_subset.get("triggerWord") or "").strip(),
+                "repeatCount": max(1, int(raw_subset.get("repeatCount") or 10)),
+                "workKey": _subset_work_key(index, image_dir),
+                "label": f"{index + 1}:{subset_name}",
+            }
+        )
+
+    if dataset_subsets:
+        return dataset_subsets
+
+    dataset_dir = str(config.get("datasetDir") or "").strip()
+    if not dataset_dir:
+        return []
+
+    return [
+        {
+            "imageDir": dataset_dir,
+            "triggerWord": str(config.get("triggerWord") or "").strip(),
+            "repeatCount": max(1, int(config.get("repeatCount") or 10)),
+            "workKey": _subset_work_key(0, dataset_dir),
+            "label": f"1:{Path(dataset_dir).name or 'subset_1'}",
+        }
+    ]
+
+
+def _get_effective_subset_dir(
+    work_dir: str, subset: dict[str, Any], opts: dict[str, Any]
+) -> str:
+    if opts.get("runResize", False):
+        return os.path.join(work_dir, "resized", subset["workKey"])
+    return subset["imageDir"]
+
+
 def run_preprocessing(config: dict[str, Any]) -> bool:
     """
     Execute the full preprocessing pipeline based on preprocessOptions.
@@ -25,88 +76,116 @@ def run_preprocessing(config: dict[str, Any]) -> bool:
         info("Preprocessing skipped by user (skipPreprocessing=true)")
         return True
 
-    dataset_dir: str = config["datasetDir"]
     work_dir: str = config["workDir"]
     sd_dir: str = config["sdScriptsDir"]
     python = sys.executable
+    dataset_subsets = _resolve_dataset_subsets(config)
+    if not dataset_subsets:
+        error("[preprocess] No dataset subsets configured")
+        return False
 
     steps = []
+    run_resize = opts.get("runResize", False)
+    run_wd14 = opts.get("runWd14Tagger", True)
+    captioning = opts.get("runCaptioning", "none")
 
     # Step 1: Resize images
-    if opts.get("runResize", False):
-        steps.append(
-            ("resize", _resize_step(python, sd_dir, dataset_dir, work_dir, opts))
-        )
-
-    effective_dir = (
-        os.path.join(work_dir, "resized") if opts.get("runResize") else dataset_dir
-    )
-
-    # Step 2: WD14 tagger
-    if opts.get("runWd14Tagger", True):
-        steps.append(("wd14-tagger", _wd14_step(python, sd_dir, effective_dir, opts)))
-
-    # Step 3: Captioning
-    captioning = opts.get("runCaptioning", "none")
-    if captioning == "blip":
-        steps.append(("blip-caption", _blip_step(python, sd_dir, effective_dir, opts)))
-    elif captioning == "git":
-        steps.append(("git-caption", _git_step(python, sd_dir, effective_dir, opts)))
-
-    # Step 4: Merge captions/tags to metadata
-    meta_path = os.path.join(work_dir, "metadata.json")
-    if opts.get("runWd14Tagger") or captioning != "none":
-        if captioning != "none":
-            meta_capt = os.path.join(work_dir, "meta_capt.json")
+    if run_resize:
+        for subset in dataset_subsets:
+            out_dir = os.path.join(work_dir, "resized", subset["workKey"])
             steps.append(
                 (
-                    "merge-captions",
-                    _merge_captions_step(
-                        python, sd_dir, effective_dir, meta_capt, opts
-                    ),
-                )
-            )
-            steps.append(
-                (
-                    "merge-tags",
-                    _merge_tags_step(
-                        python, sd_dir, effective_dir, meta_path, meta_capt, opts
-                    ),
-                )
-            )
-        else:
-            # Tags only
-            steps.append(
-                (
-                    "merge-tags",
-                    _merge_tags_only_step(
-                        python, sd_dir, effective_dir, meta_path, opts
-                    ),
+                    f"resize:{subset['label']}",
+                    _resize_step(python, sd_dir, subset["imageDir"], out_dir, opts),
                 )
             )
 
-        # Step 5: Clean
-        meta_clean = os.path.join(work_dir, "meta_clean.json")
-        steps.append(
-            ("clean-metadata", _clean_step(python, sd_dir, meta_path, meta_clean))
-        )
+    for subset in dataset_subsets:
+        effective_dir = _get_effective_subset_dir(work_dir, subset, opts)
 
-        # Step 6: Prepare buckets/latents
-        if opts.get("runPrepareBuckets", False):
+        # Step 2: WD14 tagger
+        if run_wd14:
             steps.append(
                 (
-                    "prepare-buckets",
-                    _buckets_step(
-                        python,
-                        sd_dir,
-                        effective_dir,
-                        meta_clean,
-                        os.path.join(work_dir, "meta_final.json"),
-                        config["baseModelPath"],
-                        opts,
-                    ),
+                    f"wd14-tagger:{subset['label']}",
+                    _wd14_step(python, sd_dir, effective_dir, opts),
                 )
             )
+
+        # Step 3: Captioning
+        if captioning == "blip":
+            steps.append(
+                (
+                    f"blip-caption:{subset['label']}",
+                    _blip_step(python, sd_dir, effective_dir, opts),
+                )
+            )
+        elif captioning == "git":
+            steps.append(
+                (
+                    f"git-caption:{subset['label']}",
+                    _git_step(python, sd_dir, effective_dir, opts),
+                )
+            )
+
+        # Step 4: Merge captions/tags to metadata
+        if run_wd14 or captioning != "none":
+            subset_meta_dir = os.path.join(work_dir, "metadata", subset["workKey"])
+            os.makedirs(subset_meta_dir, exist_ok=True)
+            meta_path = os.path.join(subset_meta_dir, "metadata.json")
+            if captioning != "none":
+                meta_capt = os.path.join(subset_meta_dir, "meta_capt.json")
+                steps.append(
+                    (
+                        f"merge-captions:{subset['label']}",
+                        _merge_captions_step(
+                            python, sd_dir, effective_dir, meta_capt, opts
+                        ),
+                    )
+                )
+                steps.append(
+                    (
+                        f"merge-tags:{subset['label']}",
+                        _merge_tags_step(
+                            python, sd_dir, effective_dir, meta_path, meta_capt, opts
+                        ),
+                    )
+                )
+            else:
+                steps.append(
+                    (
+                        f"merge-tags:{subset['label']}",
+                        _merge_tags_only_step(
+                            python, sd_dir, effective_dir, meta_path, opts
+                        ),
+                    )
+                )
+
+            # Step 5: Clean
+            meta_clean = os.path.join(subset_meta_dir, "meta_clean.json")
+            steps.append(
+                (
+                    f"clean-metadata:{subset['label']}",
+                    _clean_step(python, sd_dir, meta_path, meta_clean),
+                )
+            )
+
+            # Step 6: Prepare buckets/latents
+            if opts.get("runPrepareBuckets", False):
+                steps.append(
+                    (
+                        f"prepare-buckets:{subset['label']}",
+                        _buckets_step(
+                            python,
+                            sd_dir,
+                            effective_dir,
+                            meta_clean,
+                            os.path.join(subset_meta_dir, "meta_final.json"),
+                            config["baseModelPath"],
+                            opts,
+                        ),
+                    )
+                )
 
     if not steps:
         info("Preprocessing skipped (all steps disabled)")
@@ -150,15 +229,14 @@ def _run_cmd(step_name: str, cmd: list[str], cwd: str | None = None) -> bool:
 
 
 def _resize_step(
-    python: str, sd_dir: str, src: str, work_dir: str, opts: dict
+    python: str, sd_dir: str, src: str, out_dir: str, opts: dict
 ) -> list[str]:
-    out = os.path.join(work_dir, "resized")
-    os.makedirs(out, exist_ok=True)
+    os.makedirs(out_dir, exist_ok=True)
     return [
         python,
         os.path.join(sd_dir, "tools", "resize_images_to_resolution.py"),
         src,
-        out,
+        out_dir,
         "--max_resolution",
         opts.get("maxResolution", "1024x1024"),
         "--divisible_by",

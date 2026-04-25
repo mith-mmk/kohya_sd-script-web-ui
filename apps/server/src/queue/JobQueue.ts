@@ -42,18 +42,19 @@ class JobQueue {
     input: TrainJobInput,
     preprocessOptions?: Partial<PreprocessOptions>,
   ): TrainJob {
+    const normalizedInput = normalizeTrainJobInput(input);
     const id = uuidv4();
     const now = new Date().toISOString();
     const workDir = path.join(WORK_BASE, id);
     fs.mkdirSync(workDir, { recursive: true });
 
     // Resolve parameters from profile + overrides
-    const profile = input.profileId ? dbGetProfile(input.profileId) : null;
-    const baseParams: TrainParams = profile ? { ...profile.params } : getDefaultParams(input.modelType);
+    const profile = normalizedInput.profileId ? dbGetProfile(normalizedInput.profileId) : null;
+    const baseParams: TrainParams = profile ? { ...profile.params } : getDefaultParams(normalizedInput.modelType);
     const lockedFields = new Set(profile?.lockedFields ?? []);
     const resolved: TrainParams = { ...baseParams };
-    if (input.overrides) {
-      for (const [k, v] of Object.entries(input.overrides)) {
+    if (normalizedInput.overrides) {
+      for (const [k, v] of Object.entries(normalizedInput.overrides)) {
         if (!lockedFields.has(k as keyof TrainParams)) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (resolved as any)[k] = v;
@@ -63,7 +64,7 @@ class JobQueue {
 
     const job: TrainJob = {
       id, name: input.name, status: 'queued', currentPhase: 'preprocess',
-      modelType: input.modelType, workDir, input,
+      modelType: normalizedInput.modelType, workDir, input: normalizedInput,
       preprocessOptions: { ...defaultPreprocessOptions, ...preprocessOptions },
       params: resolved,
       retryCount: 0, createdAt: now, updatedAt: now,
@@ -78,8 +79,10 @@ class JobQueue {
     if (!job) throw new Error(`Job ${jobId} not found`);
     if (this.processes.has(jobId)) throw new Error(`Job ${jobId} already running`);
 
-    const resolvedSdScriptsDir = job.input.sdScriptsDir?.trim()
-      ? path.resolve(job.input.sdScriptsDir)
+    const normalizedInput = normalizeTrainJobInput(job.input);
+
+    const resolvedSdScriptsDir = normalizedInput.sdScriptsDir?.trim()
+      ? path.resolve(normalizedInput.sdScriptsDir)
       : SD_SCRIPTS_DIR;
 
     const now = new Date().toISOString();
@@ -90,14 +93,15 @@ class JobQueue {
     const configPath = path.join(job.workDir, 'job_config.json');
     const bridgeConfig = {
       jobId, modelType: job.modelType,
-      baseModelPath: job.input.baseModelPath,
-      datasetDir: job.input.datasetDir,
-      outputDir: job.input.outputDir,
-      outputName: job.input.outputName,
+      baseModelPath: normalizedInput.baseModelPath,
+      datasetDir: normalizedInput.datasetDir,
+      outputDir: normalizedInput.outputDir,
+      outputName: normalizedInput.outputName,
       workDir: job.workDir,
       sdScriptsDir: resolvedSdScriptsDir,
-      triggerWord: job.input.triggerWord?.trim() || null,
-      repeatCount: job.input.repeatCount ?? 10,
+      datasetSubsets: normalizedInput.datasetSubsets,
+      triggerWord: normalizedInput.triggerWord?.trim() || null,
+      repeatCount: normalizedInput.repeatCount ?? 10,
       preprocessOptions: job.preprocessOptions,
       params: job.params,
       resume: retryConfig?.stateDir ?? job.stateDir ?? null,
@@ -247,6 +251,37 @@ class JobQueue {
 
 // Singleton
 export const jobQueue = new JobQueue();
+
+function normalizeTrainJobInput(input: TrainJobInput): TrainJobInput {
+  const datasetSubsets = (input.datasetSubsets ?? [])
+    .map(subset => {
+      const imageDir = subset.imageDir.trim();
+      if (!imageDir) return null;
+      const triggerWord = subset.triggerWord?.trim() || undefined;
+      const repeatCount = Math.max(1, Number(subset.repeatCount) || 10);
+      return { imageDir, triggerWord, repeatCount };
+    })
+    .filter((subset): subset is NonNullable<typeof subset> => subset !== null);
+
+  const fallbackDatasetDir = input.datasetDir.trim();
+  if (!datasetSubsets.length && fallbackDatasetDir) {
+    datasetSubsets.push({
+      imageDir: fallbackDatasetDir,
+      triggerWord: input.triggerWord?.trim() || undefined,
+      repeatCount: Math.max(1, Number(input.repeatCount) || 10),
+    });
+  }
+
+  const primarySubset = datasetSubsets[0];
+  return {
+    ...input,
+    datasetDir: primarySubset?.imageDir ?? fallbackDatasetDir,
+    datasetSubsets,
+    sdScriptsDir: input.sdScriptsDir?.trim() || undefined,
+    triggerWord: primarySubset?.triggerWord ?? (input.triggerWord?.trim() || undefined),
+    repeatCount: primarySubset?.repeatCount ?? Math.max(1, Number(input.repeatCount) || 10),
+  };
+}
 
 // ─── Parameter defaults by model ─────────────────────────────────────────────
 function getDefaultParams(modelType: string): TrainParams {

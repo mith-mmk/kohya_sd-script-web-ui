@@ -40,6 +40,12 @@ export interface PreprocessOptions {
   skipPreprocessing: boolean;
 }
 
+export interface DatasetSubsetInput {
+  imageDir: string;
+  triggerWord?: string;
+  repeatCount?: number;
+}
+
 export interface TrainJobInput {
   name: string;
   modelType: ModelType;
@@ -47,6 +53,7 @@ export interface TrainJobInput {
   datasetDir: string;
   outputDir: string;
   outputName: string;
+  datasetSubsets?: DatasetSubsetInput[];
   sdScriptsDir?: string;
   triggerWord?: string;
   repeatCount?: number;

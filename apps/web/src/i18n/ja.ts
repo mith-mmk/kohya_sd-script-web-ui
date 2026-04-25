@@ -36,6 +36,7 @@ export interface Translations {
   // ── NewJob ─────────────────────────────────────────
   newJobTitle: string;
   sectionBasic: string;
+  sectionDatasets: string;
   sectionPaths: string;
   sectionPreproc: string;
   fieldJobName: string;
@@ -53,6 +54,13 @@ export interface Translations {
   fieldOutputDir: string;
   fieldOutputName: string;
   fieldOutputNamePlaceholder: string;
+  datasetSubsetTitle: (n: number) => string;
+  addDatasetSubset: string;
+  removeDatasetSubset: string;
+  datasetPreviewTitle: string;
+  datasetPreviewEmpty: string;
+  datasetPreviewCount: (shown: number, total: number) => string;
+  datasetPreviewMore: (remaining: number) => string;
   browseFile: string;
   browseFolder: string;
   wd14Tagger: string;
@@ -114,6 +122,7 @@ const ja: Translations = {
   loading: '読み込み中…',
   newJobTitle: '新規 LoRA ジョブ',
   sectionBasic: '基本設定',
+  sectionDatasets: 'データセットサブセット',
   sectionPaths: 'パス設定',
   sectionPreproc: '前処理オプション',
   fieldJobName: 'ジョブ名',
@@ -131,6 +140,13 @@ const ja: Translations = {
   fieldOutputDir: '出力フォルダ',
   fieldOutputName: '出力ファイル名（拡張子なし）',
   fieldOutputNamePlaceholder: '例: my-lora',
+  datasetSubsetTitle: (n: number) => `サブセット ${n}`,
+  addDatasetSubset: '+ サブセット追加',
+  removeDatasetSubset: '削除',
+  datasetPreviewTitle: '画像プレビュー',
+  datasetPreviewEmpty: 'このサブセットのフォルダを「参照…」から選ぶと、先頭の画像をここに表示します。',
+  datasetPreviewCount: (shown: number, total: number) => `${total} 枚中 ${shown} 枚を表示`,
+  datasetPreviewMore: (remaining: number) => `ほか ${remaining} 枚`,
   browseFile: '参照…',
   browseFolder: '参照…',
   wd14Tagger: 'WD14 自動タグ付け',
