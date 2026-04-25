@@ -1,0 +1,258 @@
+import { spawn, ChildProcess } from 'node:child_process';
+import path from 'node:path';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { v4 as uuidv4 } from 'uuid';
+import type { TrainJob, TrainJobInput, PreprocessOptions, TrainParams, LogEvent, RetryConfig } from '../types/job.js';
+import { conservativeOverride, defaultPreprocessOptions } from '../types/job.js';
+import {
+  dbInsertJob, dbUpdateJob, dbGetJob, dbListJobs, dbInsertLog, dbGetProfile,
+} from '../db/client.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const BRIDGE_DIR = path.resolve(process.env['BRIDGE_DIR'] ?? path.join(__dirname, '../../../../python/bridge'));
+const SD_SCRIPTS_DIR = path.resolve(process.env['SD_SCRIPTS_DIR'] ?? path.join(__dirname, '../../../../sd-scripts'));
+const WORK_BASE = path.resolve(process.env['WORK_BASE'] ?? path.join(__dirname, '../../../../data/jobs'));
+const PYTHON_BIN = process.env['PYTHON_BIN'] ?? 'python';
+
+type LogListener = (event: LogEvent) => void;
+
+class JobQueue {
+  private processes = new Map<string, ChildProcess>();
+  private listeners = new Map<string, Set<LogListener>>();
+
+  // ─── Subscribe to live logs ─────────────────────────────────────────────────
+  subscribe(jobId: string, fn: LogListener): () => void {
+    if (!this.listeners.has(jobId)) this.listeners.set(jobId, new Set());
+    this.listeners.get(jobId)!.add(fn);
+    return () => this.listeners.get(jobId)?.delete(fn);
+  }
+
+  private emit(event: LogEvent): void {
+    dbInsertLog(event);
+    this.listeners.get(event.jobId)?.forEach(fn => fn(event));
+  }
+
+  private sysLog(jobId: string, level: LogEvent['level'], message: string): void {
+    this.emit({ jobId, ts: Date.now(), type: 'system', level, message });
+  }
+
+  // ─── Create job ─────────────────────────────────────────────────────────────
+  createJob(
+    input: TrainJobInput,
+    preprocessOptions?: Partial<PreprocessOptions>,
+  ): TrainJob {
+    const id = uuidv4();
+    const now = new Date().toISOString();
+    const workDir = path.join(WORK_BASE, id);
+    fs.mkdirSync(workDir, { recursive: true });
+
+    // Resolve parameters from profile + overrides
+    const profile = input.profileId ? dbGetProfile(input.profileId) : null;
+    const baseParams: TrainParams = profile ? { ...profile.params } : getDefaultParams(input.modelType);
+    const lockedFields = new Set(profile?.lockedFields ?? []);
+    const resolved: TrainParams = { ...baseParams };
+    if (input.overrides) {
+      for (const [k, v] of Object.entries(input.overrides)) {
+        if (!lockedFields.has(k as keyof TrainParams)) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (resolved as any)[k] = v;
+        }
+      }
+    }
+
+    const job: TrainJob = {
+      id, name: input.name, status: 'queued', currentPhase: 'preprocess',
+      modelType: input.modelType, workDir, input,
+      preprocessOptions: { ...defaultPreprocessOptions, ...preprocessOptions },
+      params: resolved,
+      retryCount: 0, createdAt: now, updatedAt: now,
+    };
+    dbInsertJob(job);
+    return job;
+  }
+
+  // ─── Start / enqueue job ────────────────────────────────────────────────────
+  async startJob(jobId: string, retryConfig?: RetryConfig): Promise<void> {
+    const job = dbGetJob(jobId);
+    if (!job) throw new Error(`Job ${jobId} not found`);
+    if (this.processes.has(jobId)) throw new Error(`Job ${jobId} already running`);
+
+    const now = new Date().toISOString();
+    dbUpdateJob(jobId, { status: 'running', startedAt: now });
+    this.sysLog(jobId, 'info', `Starting job "${job.name}" [${job.modelType}]`);
+
+    // Write job config to workDir for bridge to read
+    const configPath = path.join(job.workDir, 'job_config.json');
+    const bridgeConfig = {
+      jobId, modelType: job.modelType,
+      baseModelPath: job.input.baseModelPath,
+      datasetDir: job.input.datasetDir,
+      outputDir: job.input.outputDir,
+      outputName: job.input.outputName,
+      workDir: job.workDir,
+      sdScriptsDir: SD_SCRIPTS_DIR,
+      preprocessOptions: job.preprocessOptions,
+      params: job.params,
+      resume: retryConfig?.stateDir ?? job.stateDir ?? null,
+      paramsOverride: retryConfig?.paramsOverride ?? null,
+      retryTier: retryConfig?.tier ?? null,
+    };
+    fs.writeFileSync(configPath, JSON.stringify(bridgeConfig, null, 2), 'utf-8');
+
+    const proc = spawn(PYTHON_BIN, [
+      path.join(BRIDGE_DIR, 'runner.py'),
+      '--config', configPath,
+    ], {
+      cwd: job.workDir,
+      env: { ...process.env },
+    });
+
+    this.processes.set(jobId, proc);
+
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      for (const line of chunk.toString().split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const event = JSON.parse(trimmed) as LogEvent & { exitCode?: number };
+          if (event.type === 'exit') {
+            this.handleExit(jobId, event.data?.exitCode ?? -1, event.message);
+          } else {
+            this.emit({ ...event, jobId });
+          }
+        } catch {
+          this.emit({ jobId, ts: Date.now(), type: 'stdout', level: 'info', message: trimmed });
+        }
+      }
+    });
+
+    proc.stderr?.on('data', (chunk: Buffer) => {
+      const text = chunk.toString().trim();
+      if (text) this.emit({ jobId, ts: Date.now(), type: 'stderr', level: 'warn', message: text });
+    });
+
+    proc.on('error', err => {
+      this.emit({ jobId, ts: Date.now(), type: 'system', level: 'error', message: `Process error: ${err.message}` });
+      this.handleExit(jobId, 1, err.message);
+    });
+
+    proc.on('close', code => {
+      if (this.processes.has(jobId)) {
+        this.handleExit(jobId, code ?? -1, code === 0 ? 'Process completed' : `Exited with code ${code}`);
+      }
+    });
+  }
+
+  private handleExit(jobId: string, code: number, message: string): void {
+    this.processes.delete(jobId);
+    const job = dbGetJob(jobId);
+    if (!job || job.status === 'completed') return;
+
+    if (code === 0) {
+      dbUpdateJob(jobId, { status: 'completed', currentPhase: 'done', completedAt: new Date().toISOString() });
+      this.sysLog(jobId, 'info', `Job completed successfully`);
+    } else {
+      const nextTier = this.getNextRetryTier(job);
+      if (nextTier) {
+        dbUpdateJob(jobId, { status: 'resumable', errorMessage: message, retryCount: job.retryCount + 1 });
+        this.sysLog(jobId, 'warn', `Job failed (tier ${nextTier} available). Click Resume to retry.`);
+      } else {
+        dbUpdateJob(jobId, { status: 'failed', errorMessage: message });
+        this.sysLog(jobId, 'error', `Job failed: ${message}`);
+      }
+    }
+  }
+
+  // ─── Resume with staged retry ───────────────────────────────────────────────
+  async resumeJob(jobId: string): Promise<void> {
+    const job = dbGetJob(jobId);
+    if (!job) throw new Error(`Job ${jobId} not found`);
+
+    const tier = this.getNextRetryTier(job);
+    if (!tier) throw new Error(`No retry tier available for job ${jobId}`);
+
+    const retryConfig = await this.buildRetryConfig(job, tier);
+    this.sysLog(jobId, 'info', `Resuming with tier: ${tier}`);
+    await this.startJob(jobId, retryConfig);
+  }
+
+  private getNextRetryTier(job: TrainJob): RetryConfig['tier'] | null {
+    const states = this.discoverStateDirs(job);
+    switch (job.retryCount) {
+      case 0: return states.length > 0 ? 'latest-state' : 'model-conservative';
+      case 1: return states.length > 1 ? 'prev-state' : 'model-conservative';
+      case 2: return 'model-conservative';
+      default: return null;
+    }
+  }
+
+  private async buildRetryConfig(job: TrainJob, tier: RetryConfig['tier']): Promise<RetryConfig> {
+    const states = this.discoverStateDirs(job);
+    switch (tier) {
+      case 'latest-state':
+        return { tier, stateDir: states[0] };
+      case 'prev-state':
+        return { tier, stateDir: states[1] ?? states[0] };
+      case 'model-conservative':
+        return { tier, paramsOverride: conservativeOverride };
+    }
+  }
+
+  /** Discover state dirs in outputDir, sorted newest-first */
+  private discoverStateDirs(job: TrainJob): string[] {
+    const outDir = job.input.outputDir;
+    if (!fs.existsSync(outDir)) return [];
+    const entries = fs.readdirSync(outDir, { withFileTypes: true });
+    const pattern = /^.+-\d{6}-state$|^.+-step\d{8}-state$/;
+    return entries
+      .filter(e => e.isDirectory() && pattern.test(e.name))
+      .map(e => path.join(outDir, e.name))
+      .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+  }
+
+  // ─── Stop job ───────────────────────────────────────────────────────────────
+  stopJob(jobId: string): void {
+    const proc = this.processes.get(jobId);
+    if (proc) {
+      proc.kill('SIGTERM');
+      this.processes.delete(jobId);
+      dbUpdateJob(jobId, { status: 'resumable' });
+      this.sysLog(jobId, 'warn', 'Job stopped by user');
+    }
+  }
+
+  // ─── Update dataset (fine-tune loop) ────────────────────────────────────────
+  updateDatasetConfig(jobId: string, updates: {
+    addImages?: string[];
+    removeImages?: string[];
+    params?: Partial<TrainParams>;
+  }): TrainJob {
+    const job = dbGetJob(jobId);
+    if (!job) throw new Error(`Job ${jobId} not found`);
+    if (updates.params) dbUpdateJob(jobId, { params: { ...job.params, ...updates.params } });
+    this.sysLog(jobId, 'info', `Dataset config updated: ${JSON.stringify(updates)}`);
+    return dbGetJob(jobId)!;
+  }
+
+  list(): TrainJob[] { return dbListJobs(); }
+  get(id: string): TrainJob | null { return dbGetJob(id); }
+}
+
+// Singleton
+export const jobQueue = new JobQueue();
+
+// ─── Parameter defaults by model ─────────────────────────────────────────────
+function getDefaultParams(modelType: string): TrainParams {
+  const base: TrainParams = {
+    networkDim: 32, networkAlpha: 16, learningRate: 1e-4,
+    batchSize: 2, maxTrainEpochs: 10, optimizerType: 'AdamW8bit',
+    lrScheduler: 'cosine_with_restarts', mixedPrecision: 'fp16',
+    gradientCheckpointing: true, cacheLatents: true, cacheLatentsToDisk: false,
+    saveEveryNEpochs: 2, saveLastNEpochs: 3, saveState: true, saveModelAs: 'safetensors',
+  };
+  if (modelType === 'sdxl') return { ...base, networkDim: 64, networkAlpha: 32, mixedPrecision: 'bf16', cacheLatentsToDisk: true };
+  if (modelType === 'flux') return { ...base, networkDim: 16, networkAlpha: 8, batchSize: 1, mixedPrecision: 'bf16', cacheLatentsToDisk: true };
+  if (modelType === 'anima') return { ...base, batchSize: 1, mixedPrecision: 'bf16', cacheLatentsToDisk: true };
+  return base;
+}

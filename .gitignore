@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+apps/server/dist/
+apps/web/dist/
+apps/desktop/dist/
+
+# Python
+venv/
+.venv/
+.python/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Runtime data
+data/
+work/
+*.db
+*.db-shm
+*.db-wal
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/settings.json
+.idea/

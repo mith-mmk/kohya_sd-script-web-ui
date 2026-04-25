@@ -1,0 +1,33 @@
+{
+  "name": "@kohya-ui/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsc && cross-env NODE_ENV=development electron dist/main.js",
+    "build": "tsc",
+    "package": "electron-builder"
+  },
+  "dependencies": {
+    "electron": "^33.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "cross-env": "^7.0.3",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.7.2"
+  },
+  "build": {
+    "appId": "com.kohya.lora-builder",
+    "productName": "Kohya LoRA Builder",
+    "files": ["dist/**/*"],
+    "extraResources": [
+      { "from": "../server/dist", "to": "server/dist" },
+      { "from": "../../../python", "to": "python" },
+      { "from": "../../../sd-scripts", "to": "sd-scripts" }
+    ],
+    "win": { "target": "nsis" },
+    "mac": { "target": "dmg" },
+    "linux": { "target": "AppImage" }
+  }
+}

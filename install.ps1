@@ -1,0 +1,239 @@
+#Requires -Version 5.1
+[CmdletBinding()]
+param(
+  # Python 3.10-3.12 が見つからないとき自動でダウンロードする
+  [switch]$AutoPython,
+  # 自動取得するバージョン (3.10 / 3.11 / 3.12)
+  [ValidateSet('3.10', '3.11', '3.12')]
+  [string]$PythonVersion = '3.12'
+)
+
+$ErrorActionPreference = 'Stop'
+$Host.UI.RawUI.WindowTitle = 'Kohya LoRA Builder - インストーラ'
+
+# ── カラー出力ヘルパー ────────────────────────────────────────────
+function Write-Step  ($msg) { Write-Host "  $msg" -ForegroundColor Cyan }
+function Write-Ok    ($msg) { Write-Host "  [ OK ] $msg" -ForegroundColor Green }
+function Write-Warn  ($msg) { Write-Host "  [WARN] $msg" -ForegroundColor Yellow }
+function Write-Fail  ($msg) { Write-Host "  [ERR]  $msg" -ForegroundColor Red; Read-Host 'Enterで終了'; exit 1 }
+
+# ── Python 自動取得 (python-build-standalone install_only) ────────
+# tar コマンドは Windows 10 1803 以降に標準搭載。
+function Invoke-DownloadPython {
+  param(
+    [string]$Version,   # '3.10' / '3.11' / '3.12'
+    [string]$DestDir    # 展開先ディレクトリ (例: $Root\.python)
+  )
+
+  # python-build-standalone の既知 URL テーブル (install_only, x64 Windows MSVC)
+  $urls = @{
+    '3.12' = 'https://github.com/indygreg/python-build-standalone/releases/download/20241002/cpython-3.12.7+20241002-x86_64-pc-windows-msvc-install_only.tar.gz'
+    '3.11' = 'https://github.com/indygreg/python-build-standalone/releases/download/20241002/cpython-3.11.10+20241002-x86_64-pc-windows-msvc-install_only.tar.gz'
+    '3.10' = 'https://github.com/indygreg/python-build-standalone/releases/download/20241002/cpython-3.10.15+20241002-x86_64-pc-windows-msvc-install_only.tar.gz'
+  }
+  $url = $urls[$Version]
+  if (-not $url) { Write-Fail "Python $Version の URL が見つかりません。3.10/3.11/3.12 を指定してください。" }
+
+  $tmpTar = "$env:TEMP\py-standalone-$Version.tar.gz"
+  $tmpDir = "$env:TEMP\py-standalone-$Version"
+
+  Write-Step "      Python $Version をダウンロード中 (約 20 MB)..."
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+  Invoke-WebRequest -Uri $url -OutFile $tmpTar -UseBasicParsing
+
+  Write-Step "      展開中..."
+  if (Test-Path $tmpDir) { Remove-Item $tmpDir -Recurse -Force }
+  New-Item -ItemType Directory $tmpDir -Force | Out-Null
+  # tar は Windows 10 1803+ 標準 (%SystemRoot%\System32\tar.exe)
+  & tar -xf $tmpTar -C $tmpDir
+  if ($LASTEXITCODE -ne 0) { Write-Fail "tar 展開に失敗しました。Windows 10 1803 以降が必要です。" }
+
+  # install_only は python/ サブフォルダに展開される
+  $srcPython = Join-Path $tmpDir 'python'
+  if (-not (Test-Path $srcPython)) { Write-Fail "展開後のディレクトリが見つかりません: $srcPython" }
+
+  if (Test-Path $DestDir) { Remove-Item $DestDir -Recurse -Force }
+  Move-Item $srcPython $DestDir
+
+  Remove-Item $tmpTar  -Force -ErrorAction SilentlyContinue
+  Remove-Item $tmpDir  -Recurse -Force -ErrorAction SilentlyContinue
+
+  $exe = Join-Path $DestDir 'python.exe'
+  if (-not (Test-Path $exe)) { Write-Fail "python.exe が見つかりません: $exe" }
+  Write-Ok "Python $Version を $DestDir に展開しました。"
+  return $exe
+}
+
+# ── 作業ディレクトリをスクリプトのある場所に固定 ─────────────────
+$Root = $PSScriptRoot
+Set-Location $Root
+
+Write-Host ""
+Write-Host "============================================================" -ForegroundColor Magenta
+Write-Host "  Kohya LoRA Builder - Windows インストーラ (PowerShell)"    -ForegroundColor Magenta
+Write-Host "============================================================" -ForegroundColor Magenta
+Write-Host ""
+
+# ─────────────────────────────────────────────────────────────────
+# 1. Node.js 確認
+# ─────────────────────────────────────────────────────────────────
+Write-Step "[1/6] Node.js を確認中..."
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+  Write-Fail "Node.js が見つかりません。https://nodejs.org/ から LTS 版をインストールしてください。"
+}
+$nodeVer = node -v
+$npmVer = npm -v
+Write-Ok "Node.js $nodeVer / npm $npmVer"
+
+# ─────────────────────────────────────────────────────────────────
+# 2. Python 確認
+# ─────────────────────────────────────────────────────────────────
+Write-Step "[2/6] Python を確認中..."
+$pythonCmd = $null
+$pythonExe = $null
+$pythonArgs = @()
+foreach ($candidate in @(
+    @{ exe = 'py'; args = @('-3.10') },
+    @{ exe = 'py'; args = @('-3.11') },
+    @{ exe = 'py'; args = @('-3.12') },
+    @{ exe = 'python'; args = @() },
+    @{ exe = 'python3'; args = @() },
+    @{ exe = 'py'; args = @() }
+  )) {
+  $exe = $candidate.exe
+  $args = $candidate.args
+  if (-not (Get-Command $exe -ErrorAction SilentlyContinue)) { continue }
+
+  $ver = & $exe @args --version 2>&1
+  if ($ver -match '(\d+)\.(\d+)') {
+    $major = [int]$Matches[1]
+    $minor = [int]$Matches[2]
+    if ($major -eq 3 -and $minor -ge 10 -and $minor -le 12) {
+      $pythonCmd = "$exe $($args -join ' ')".Trim()
+      $pythonExe = $exe
+      $pythonArgs = $args
+      Write-Ok "$pythonCmd ($ver)"
+      break
+    }
+  }
+}
+if (-not $pythonCmd) {
+  # ── ローカル .python\ を確認 ──────────────────────────────────
+  $localPyExe = "$Root\.python\python.exe"
+  if (Test-Path $localPyExe) {
+    $ver = & $localPyExe --version 2>&1
+    Write-Ok "ローカル Python を使用します: $ver ($localPyExe)"
+    $pythonExe = $localPyExe
+    $pythonArgs = @()
+    $pythonCmd = $localPyExe
+  }
+  elseif ($AutoPython) {
+    Write-Warn "Python 3.10-3.12 が見つかりません。python-build-standalone から取得します..."
+    $localPyExe = Invoke-DownloadPython -Version $PythonVersion -DestDir "$Root\.python"
+    $pythonExe = $localPyExe
+    $pythonArgs = @()
+    $pythonCmd = $localPyExe
+  }
+  else {
+    Write-Warn "Python 3.10-3.12 が見つかりません。"
+    Write-Warn "  オプション 1: https://www.python.org/ から 3.10/3.11/3.12 をインストールして再実行"
+    Write-Warn "  オプション 2: .\install.ps1 -AutoPython          (3.12 を自動取得)"
+    Write-Warn "  オプション 3: .\install.ps1 -AutoPython -PythonVersion 3.10"
+    Write-Fail "Python が見つかりません。"
+  }
+}
+
+# ─────────────────────────────────────────────────────────────────
+# 3. npm install
+# ─────────────────────────────────────────────────────────────────
+Write-Step "[3/6] Node.js 依存関係をインストール中..."
+npm install
+if ($LASTEXITCODE -ne 0) { Write-Fail "npm install に失敗しました。" }
+Write-Ok "完了。"
+
+# ─────────────────────────────────────────────────────────────────
+# 4. TypeScript ビルド
+# ─────────────────────────────────────────────────────────────────
+Write-Step "[4/6] TypeScript をビルド中..."
+npm run build
+if ($LASTEXITCODE -ne 0) { Write-Fail "ビルドに失敗しました。" }
+Write-Ok "完了。"
+
+# ─────────────────────────────────────────────────────────────────
+# 5. Python venv セットアップ
+# ─────────────────────────────────────────────────────────────────
+Write-Step "[5/6] Python 仮想環境をセットアップ中..."
+if ((Test-Path "$Root\venv") -and (-not (Test-Path "$Root\.venv"))) {
+  Write-Warn "既存の venv が見つかりました。以後は .venv を使用するため、新規作成します。"
+}
+
+if (-not (Test-Path "$Root\.venv")) {
+  Write-Step "      .venv を作成中..."
+  & $pythonExe @pythonArgs -m venv "$Root\.venv"
+  if ($LASTEXITCODE -ne 0) { Write-Fail ".venv の作成に失敗しました。" }
+}
+else {
+  Write-Step "      既存の .venv を使用します。"
+}
+
+$venvPython = "$Root\.venv\Scripts\python.exe"
+$venvPip = "$Root\.venv\Scripts\pip.exe"
+
+Write-Step "      pip をアップグレード中..."
+& $venvPython -m pip install --upgrade pip --quiet
+
+Write-Step "      sd-scripts の依存関係をインストール中..."
+# requirements.txt 内の `-e .` は CWD 相対なので sd-scripts ディレクトリで実行する
+Push-Location "$Root\sd-scripts"
+try {
+  & $venvPip install -r requirements.txt --quiet
+  if ($LASTEXITCODE -ne 0) {
+    Write-Warn "requirements.txt の一部でエラーが発生しました。"
+    Write-Warn "PyTorch は別途インストールが必要な場合があります: https://pytorch.org/get-started/locally/"
+  }
+  else {
+    Write-Ok "requirements.txt インストール完了。"
+  }
+}
+finally {
+  Pop-Location
+}
+
+# ─────────────────────────────────────────────────────────────────
+# 6. データディレクトリ作成
+# ─────────────────────────────────────────────────────────────────
+Write-Step "[6/6] データディレクトリを作成中..."
+@('data', 'work') | ForEach-Object {
+  if (-not (Test-Path "$Root\$_")) { New-Item -ItemType Directory "$Root\$_" | Out-Null }
+}
+Write-Ok "完了。"
+
+# ─────────────────────────────────────────────────────────────────
+# .env 生成（存在しない場合のみ）
+# ─────────────────────────────────────────────────────────────────
+if (-not (Test-Path "$Root\.env")) {
+  Write-Step "      .env を生成中..."
+  @"
+# Kohya LoRA Builder 設定
+PORT=3001
+HOST=127.0.0.1
+DB_PATH=$Root\data\kohya.db
+SD_SCRIPTS_DIR=$Root\sd-scripts
+BRIDGE_DIR=$Root\python\bridge
+WORK_BASE=$Root\work
+PYTHON_BIN=$Root\.venv\Scripts\python.exe
+"@ | Set-Content "$Root\.env" -Encoding UTF8
+  Write-Ok ".env を作成しました。"
+}
+
+Write-Host ""
+Write-Host "============================================================" -ForegroundColor Magenta
+Write-Host "  インストール完了！" -ForegroundColor Green
+Write-Host ""
+Write-Host "  起動方法:" -ForegroundColor White
+Write-Host "    開発モード  : npm run dev" -ForegroundColor Gray
+Write-Host "    本番ビルド  : npm run build" -ForegroundColor Gray
+Write-Host "    デスクトップ: cd apps\desktop ; npm run dev" -ForegroundColor Gray
+Write-Host "============================================================" -ForegroundColor Magenta
+Write-Host ""
+Read-Host "Enterで閉じる"
