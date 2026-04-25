@@ -37,6 +37,7 @@ export interface PreprocessOptions {
   runPrepareBuckets: boolean;
   bucketResoSteps: number;
   captionExtension: string;
+  skipPreprocessing: boolean;
 }
 
 export interface TrainJobInput {
@@ -46,6 +47,9 @@ export interface TrainJobInput {
   datasetDir: string;
   outputDir: string;
   outputName: string;
+  sdScriptsDir?: string;
+  triggerWord?: string;
+  repeatCount?: number;
   profileId?: string;
   overrides?: Partial<TrainParams>;
 }

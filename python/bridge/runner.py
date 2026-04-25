@@ -24,6 +24,44 @@ from preprocessor import run_preprocessing
 from command_builder import build_train_command
 
 
+_DEFAULT_RESOLUTION = {
+    "sd1x": 512,
+    "sdxl": 1024,
+    "flux": 1024,
+    "anima": 1024,
+}
+
+
+def generate_dataset_toml(config: dict) -> str:
+    dataset_dir = config["datasetDir"]
+    work_dir = config["workDir"]
+    model_type = config.get("modelType", "sdxl")
+    trigger_word = (config.get("triggerWord") or "").strip()
+    repeat_count = max(1, int(config.get("repeatCount") or 10))
+    preprocess_opts = config.get("preprocessOptions", {}) or {}
+    caption_extension = preprocess_opts.get("captionExtension", ".txt")
+    resolution = _DEFAULT_RESOLUTION.get(model_type, 1024)
+    toml_path = os.path.join(work_dir, "dataset.toml")
+
+    lines = [
+        "[[datasets]]",
+        f"resolution = {resolution}",
+        "batch_size = 1",
+        "",
+        "  [[datasets.subsets]]",
+        f"  image_dir = {json.dumps(dataset_dir)}",
+        f"  caption_extension = {json.dumps(caption_extension)}",
+        f"  num_repeats = {repeat_count}",
+    ]
+    if trigger_word:
+        lines.append(f"  class_tokens = {json.dumps(trigger_word)}")
+
+    with open(toml_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+    return toml_path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True, help="Path to job_config.json")
@@ -55,6 +93,9 @@ def main() -> None:
         sys.exit(1)
 
     info("[phase:preprocess] Preprocessing complete")
+
+    dataset_toml = generate_dataset_toml(config)
+    info(f"[phase:train] Generated dataset config: {dataset_toml}")
 
     # ── Phase 2: Training ─────────────────────────────────────────────────────
     info("[phase:train] Building training command")

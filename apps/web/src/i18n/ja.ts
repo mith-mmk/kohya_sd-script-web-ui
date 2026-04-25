@@ -43,6 +43,11 @@ export interface Translations {
   fieldModelType: string;
   fieldProfile: string;
   fieldProfileCustom: string;
+  fieldKohyaSsDir: string;
+  fieldKohyaSsDirPlaceholder: string;
+  fieldTriggerWord: string;
+  fieldTriggerWordPlaceholder: string;
+  fieldRepeatCount: string;
   fieldBaseModelPath: string;
   fieldDatasetDir: string;
   fieldOutputDir: string;
@@ -116,6 +121,11 @@ const ja: Translations = {
   fieldModelType: 'モデルタイプ',
   fieldProfile: 'パラメータプロファイル',
   fieldProfileCustom: '— カスタム —',
+  fieldKohyaSsDir: 'kohya_ss / sd-scripts フォルダ（任意）',
+  fieldKohyaSsDirPlaceholder: '空欄ならサーバー設定を使用',
+  fieldTriggerWord: 'トリガーワード',
+  fieldTriggerWordPlaceholder: '例: my-character',
+  fieldRepeatCount: '繰り返し回数',
   fieldBaseModelPath: 'ベースモデルパス (.safetensors)',
   fieldDatasetDir: 'データセットフォルダ（学習画像）',
   fieldOutputDir: '出力フォルダ',

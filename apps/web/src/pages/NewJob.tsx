@@ -33,7 +33,7 @@ export default function NewJob() {
 
   const [input, setInput] = useState<TrainJobInput>({
     name: '', modelType: 'sdxl', baseModelPath: '', datasetDir: '',
-    outputDir: '', outputName: '', profileId: 'sdxl-standard',
+    outputDir: '', outputName: '', sdScriptsDir: '', triggerWord: '', repeatCount: 10, profileId: 'sdxl-standard',
   });
 
   const [preproc, setPreproc] = useState<Partial<PreprocessOptions>>({
@@ -139,6 +139,32 @@ export default function NewJob() {
                   <option value="">{t.fieldProfileCustom}</option>
                   {filteredProfiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
+              </div>
+            </div>
+            <div style={S.row}>
+              <label style={S.label}>{t.fieldKohyaSsDir}</label>
+              <div style={S.inputRow}>
+                <input style={S.input} placeholder={t.fieldKohyaSsDirPlaceholder} {...inp('sdScriptsDir')} />
+                <button type="button" style={S.browseBtn} onClick={() => browseFolder('sdScriptsDir')}>{t.browseFolder}</button>
+              </div>
+            </div>
+            <div style={S.grid2}>
+              <div style={S.row}>
+                <label style={S.label}>{t.fieldTriggerWord}</label>
+                <input style={S.input} placeholder={t.fieldTriggerWordPlaceholder} {...inp('triggerWord')} />
+              </div>
+              <div style={S.row}>
+                <label style={S.label}>{t.fieldRepeatCount}</label>
+                <input
+                  style={S.input}
+                  type="number"
+                  min="1"
+                  value={input.repeatCount ?? 10}
+                  onChange={e => setInput(i => ({
+                    ...i,
+                    repeatCount: Math.max(1, Number(e.target.value) || 1),
+                  }))}
+                />
               </div>
             </div>
             <label style={S.checkRow}>

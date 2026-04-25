@@ -78,6 +78,10 @@ class JobQueue {
     if (!job) throw new Error(`Job ${jobId} not found`);
     if (this.processes.has(jobId)) throw new Error(`Job ${jobId} already running`);
 
+    const resolvedSdScriptsDir = job.input.sdScriptsDir?.trim()
+      ? path.resolve(job.input.sdScriptsDir)
+      : SD_SCRIPTS_DIR;
+
     const now = new Date().toISOString();
     dbUpdateJob(jobId, { status: 'running', startedAt: now });
     this.sysLog(jobId, 'info', `Starting job "${job.name}" [${job.modelType}]`);
@@ -91,7 +95,9 @@ class JobQueue {
       outputDir: job.input.outputDir,
       outputName: job.input.outputName,
       workDir: job.workDir,
-      sdScriptsDir: SD_SCRIPTS_DIR,
+      sdScriptsDir: resolvedSdScriptsDir,
+      triggerWord: job.input.triggerWord?.trim() || null,
+      repeatCount: job.input.repeatCount ?? 10,
       preprocessOptions: job.preprocessOptions,
       params: job.params,
       resume: retryConfig?.stateDir ?? job.stateDir ?? null,
