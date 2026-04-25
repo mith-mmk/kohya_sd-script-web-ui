@@ -58,6 +58,7 @@ export interface Translations {
   captionBlip: string;
   captionGit: string;
   prepareBuckets: string;
+  skipPreprocessing: string;
   submitBtn: string;
   submitting: string;
   errRequired: (field: string) => string;
@@ -130,6 +131,7 @@ const ja: Translations = {
   captionBlip: 'BLIP',
   captionGit: 'GIT',
   prepareBuckets: 'バケット & 潜在変数を事前計算',
+  skipPreprocessing: '前処理をスキップ（タグ・キャプションは既に用意済み）',
   submitBtn: '▶ 学習開始',
   submitting: '開始中…',
   errRequired: (field: string) => `"${field}" は必須です`,

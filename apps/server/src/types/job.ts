@@ -59,6 +59,7 @@ export interface PreprocessOptions {
   runPrepareBuckets: boolean;
   bucketResoSteps: number;
   captionExtension: string;
+  skipPreprocessing: boolean;
 }
 
 export const defaultPreprocessOptions: PreprocessOptions = {
@@ -71,6 +72,7 @@ export const defaultPreprocessOptions: PreprocessOptions = {
   runPrepareBuckets: false,
   bucketResoSteps: 64,
   captionExtension: '.txt',
+  skipPreprocessing: false,
 };
 
 // ─── Job input ────────────────────────────────────────────────────────────────

@@ -20,6 +20,11 @@ def run_preprocessing(config: dict[str, Any]) -> bool:
     Returns True on success, False on failure.
     """
     opts: dict[str, Any] = config.get("preprocessOptions", {})
+
+    if opts.get("skipPreprocessing", False):
+        info("Preprocessing skipped by user (skipPreprocessing=true)")
+        return True
+
     dataset_dir: str = config["datasetDir"]
     work_dir: str = config["workDir"]
     sd_dir: str = config["sdScriptsDir"]

@@ -38,7 +38,7 @@ export default function NewJob() {
 
   const [preproc, setPreproc] = useState<Partial<PreprocessOptions>>({
     runWd14Tagger: true, wd14Threshold: 0.35, wd14BatchSize: 8,
-    runCaptioning: 'none', runPrepareBuckets: false,
+    runCaptioning: 'none', runPrepareBuckets: false, skipPreprocessing: false,
   });
 
   useEffect(() => {
@@ -141,6 +141,11 @@ export default function NewJob() {
                 </select>
               </div>
             </div>
+            <label style={S.checkRow}>
+              <input type="checkbox" checked={!!preproc.skipPreprocessing}
+                onChange={e => setPreproc(p => ({ ...p, skipPreprocessing: e.target.checked }))} />
+              {t.skipPreprocessing}
+            </label>
           </div>
         </div>
 
@@ -181,7 +186,7 @@ export default function NewJob() {
         </div>
 
         {/* ── Preprocessing ── */}
-        <details style={S.section}>
+        <details style={{ ...S.section, ...(preproc.skipPreprocessing ? { opacity: 0.4, pointerEvents: 'none' } : {}) }}>
           <summary style={S.summary}>▶ {t.sectionPreproc}</summary>
           <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
             <label style={S.checkRow}>

@@ -63,6 +63,7 @@ const en: Translations = {
   captionBlip: 'BLIP',
   captionGit: 'GIT',
   prepareBuckets: 'Pre-compute latents & buckets',
+  skipPreprocessing: 'Skip preprocessing (tags/captions already prepared)',
   submitBtn: '▶ Start Training',
   submitting: 'Starting…',
   errRequired: (field: string) => `"${field}" is required`,
