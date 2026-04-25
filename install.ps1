@@ -64,6 +64,33 @@ function Invoke-DownloadPython {
   return $exe
 }
 
+function Get-PyTorchIndexUrl {
+  $nvidiaSmi = Get-Command 'nvidia-smi' -ErrorAction SilentlyContinue
+  if ($nvidiaSmi) {
+    try {
+      $smiText = (& $nvidiaSmi.Source 2>$null | Out-String)
+      if ($smiText -match 'CUDA Version:\s*(\d+)\.(\d+)') {
+        $major = [int]$Matches[1]
+        $minor = [int]$Matches[2]
+        if ($major -gt 12 -or ($major -eq 12 -and $minor -ge 4)) {
+          return 'https://download.pytorch.org/whl/cu124'
+        }
+        if ($major -eq 12 -and $minor -ge 1) {
+          return 'https://download.pytorch.org/whl/cu121'
+        }
+        if ($major -gt 11 -or ($major -eq 11 -and $minor -ge 8)) {
+          return 'https://download.pytorch.org/whl/cu118'
+        }
+      }
+    }
+    catch {
+      Write-Warn "CUDA バージョンの判定に失敗したため CPU 版 PyTorch を使用します。"
+    }
+  }
+
+  return 'https://download.pytorch.org/whl/cpu'
+}
+
 # ── 作業ディレクトリをスクリプトのある場所に固定 ─────────────────
 $Root = $PSScriptRoot
 Set-Location $Root
@@ -182,6 +209,15 @@ $venvPip = "$Root\.venv\Scripts\pip.exe"
 Write-Step "      pip をアップグレード中..."
 & $venvPython -m pip install --upgrade pip --quiet
 
+$torchIndexUrl = Get-PyTorchIndexUrl
+$torchChannel = Split-Path $torchIndexUrl -Leaf
+Write-Step "      PyTorch / torchvision をインストール中 ($torchChannel)..."
+& $venvPip install torch torchvision --index-url $torchIndexUrl --quiet
+if ($LASTEXITCODE -ne 0) {
+  Write-Fail "PyTorch / torchvision のインストールに失敗しました。"
+}
+Write-Ok "PyTorch / torchvision インストール完了。"
+
 Write-Step "      sd-scripts の依存関係をインストール中..."
 # requirements.txt 内の `-e .` は CWD 相対なので sd-scripts ディレクトリで実行する
 Push-Location "$Root\sd-scripts"
@@ -189,7 +225,6 @@ try {
   & $venvPip install -r requirements.txt --quiet
   if ($LASTEXITCODE -ne 0) {
     Write-Warn "requirements.txt の一部でエラーが発生しました。"
-    Write-Warn "PyTorch は別途インストールが必要な場合があります: https://pytorch.org/get-started/locally/"
   }
   else {
     Write-Ok "requirements.txt インストール完了。"

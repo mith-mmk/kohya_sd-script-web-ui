@@ -125,6 +125,13 @@ def run_preprocessing(config: dict[str, Any]) -> bool:
 
 
 def _run_cmd(step_name: str, cmd: list[str], cwd: str | None = None) -> bool:
+    env = os.environ.copy()
+    if cwd:
+        existing_pythonpath = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = (
+            f"{cwd}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else cwd
+        )
+
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -133,6 +140,7 @@ def _run_cmd(step_name: str, cmd: list[str], cwd: str | None = None) -> bool:
         encoding="utf-8",
         errors="replace",
         cwd=cwd,
+        env=env,
     )
     assert proc.stdout
     for line in proc.stdout:
