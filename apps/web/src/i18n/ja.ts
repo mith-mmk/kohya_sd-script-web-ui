@@ -95,6 +95,7 @@ export interface Translations {
   historyStatus: string;
   errRequired: (field: string) => string;
   errLocalPathAccess: string;
+  errDatasetPreviewOnly: string;
   errImportSettings: string;
   // ── Console ────────────────────────────────────────
   consoleTitle: (n: number) => string;
@@ -202,6 +203,7 @@ const ja: Translations = {
   historyStatus: '状態',
   errRequired: (field: string) => `"${field}" は必須です`,
   errLocalPathAccess: 'この実行環境ではローカルファイルパスを取得できません。デスクトップ版を使うか、絶対パスを手入力してください。',
+  errDatasetPreviewOnly: 'ブラウザ版では絶対パスを取得できないため、画像プレビューだけ更新しました。学習に使うデータセットの絶対パスはこの欄に手入力してください。',
   errImportSettings: '設定ファイルの読み込みに失敗しました。対応する JSON を選んでください。',
   consoleTitle: (n: number) => `コンソール (${n} 行)`,
   autoScrollOn: '⏸ 自動スクロール',

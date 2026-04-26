@@ -193,6 +193,16 @@ function buildPreviewItems(files: FileList | null): { previews: PreviewItem[]; t
   };
 }
 
+function getBrowserFolderLabel(files: FileList | null): string {
+  const firstFile = Array.from(files ?? [])[0] as (File & { webkitRelativePath?: string }) | undefined;
+  const relativePath = firstFile?.webkitRelativePath?.trim();
+  if (relativePath) {
+    const parts = relativePath.split('/').filter(Boolean);
+    if (parts.length > 1) return parts[0] ?? '';
+  }
+  return '';
+}
+
 function buildEditableDatasetSubsets(input: TrainJobInput): EditableDatasetSubset[] {
   const subsets = input.datasetSubsets?.length
     ? input.datasetSubsets
@@ -559,7 +569,7 @@ export default function NewJob() {
     )));
   };
 
-  const openFolderPicker = (onSelected: (fullPath: string, files: FileList | null) => void) => {
+  const openFolderPicker = (onSelected: (fullPath: string | null, files: FileList | null) => void) => {
     const el = document.createElement('input');
     el.type = 'file';
     // @ts-ignore — webkitdirectory is non-standard but works in Electron/Chrome
@@ -569,7 +579,7 @@ export default function NewJob() {
       if (f) {
         const fullPath = getNativeFilePath(f);
         if (!fullPath) {
-          setError(t.errLocalPathAccess);
+          onSelected(null, el.files ?? null);
           return;
         }
         setError('');
@@ -590,6 +600,10 @@ export default function NewJob() {
     }
 
     openFolderPicker(fullPath => {
+      if (!fullPath) {
+        setError(t.errLocalPathAccess);
+        return;
+      }
       setInput(i => ({ ...i, [field]: fullPath }));
     });
   };
@@ -661,6 +675,10 @@ export default function NewJob() {
     }
 
     openFolderPicker(fullPath => {
+      if (!fullPath) {
+        setError(t.errLocalPathAccess);
+        return;
+      }
       setOverrideValue(field, fullPath);
     });
   };
@@ -682,10 +700,17 @@ export default function NewJob() {
 
     openFolderPicker((fullPath, files) => {
       const { previews, total } = buildPreviewItems(files);
+      const folderLabel = getBrowserFolderLabel(files);
       updateDatasetSubset(subsetId, subset => {
         revokePreviewUrls(subset.previews);
-        return { ...subset, imageDir: fullPath, previews, previewTotal: total };
+        return {
+          ...subset,
+          imageDir: (fullPath ?? subset.imageDir) || folderLabel,
+          previews,
+          previewTotal: total,
+        };
       });
+      setError(fullPath ? '' : t.errDatasetPreviewOnly);
     });
   };
 
@@ -837,8 +862,8 @@ export default function NewJob() {
                     <>
                       <div style={S.previewMeta}>{t.datasetPreviewCount(subset.previews.length, subset.previewTotal)}</div>
                       <div style={S.previewGrid}>
-                        {subset.previews.map(item => (
-                          <div key={item.url} style={S.previewCard}>
+                        {subset.previews.map((item, index) => (
+                          <div key={`${item.name}-${index}`} style={S.previewCard}>
                             <img src={item.url} alt={item.name} style={S.previewImage} />
                             <div style={S.previewName} title={item.name}>{item.name}</div>
                           </div>

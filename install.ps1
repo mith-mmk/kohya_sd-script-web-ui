@@ -91,6 +91,29 @@ function Get-PyTorchIndexUrl {
   return 'https://download.pytorch.org/whl/cpu'
 }
 
+function Install-OnnxRuntimePackages {
+  param(
+    [string]$PipExe,
+    [bool]$PreferGpu
+  )
+
+  Write-Step "      ONNX / ONNX Runtime をインストール中..."
+  if ($PreferGpu) {
+    & $PipExe install onnx onnxruntime-gpu --quiet
+    if ($LASTEXITCODE -eq 0) {
+      Write-Ok "onnx / onnxruntime-gpu インストール完了。"
+      return
+    }
+    Write-Warn "onnxruntime-gpu のインストールに失敗したため、CPU 版へフォールバックします。"
+  }
+
+  & $PipExe install onnx onnxruntime --quiet
+  if ($LASTEXITCODE -ne 0) {
+    Write-Fail "onnx / onnxruntime のインストールに失敗しました。"
+  }
+  Write-Ok "onnx / onnxruntime インストール完了。"
+}
+
 # ── 作業ディレクトリをスクリプトのある場所に固定 ─────────────────
 $Root = $PSScriptRoot
 Set-Location $Root
@@ -217,6 +240,8 @@ if ($LASTEXITCODE -ne 0) {
   Write-Fail "PyTorch / torchvision のインストールに失敗しました。"
 }
 Write-Ok "PyTorch / torchvision インストール完了。"
+
+Install-OnnxRuntimePackages -PipExe $venvPip -PreferGpu ($torchChannel -ne 'cpu')
 
 Write-Step "      sd-scripts の依存関係をインストール中..."
 # requirements.txt 内の `-e .` は CWD 相対なので sd-scripts ディレクトリで実行する

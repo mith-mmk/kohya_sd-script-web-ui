@@ -100,6 +100,7 @@ const en: Translations = {
   historyStatus: 'Status',
   errRequired: (field: string) => `"${field}" is required`,
   errLocalPathAccess: 'This environment cannot read local filesystem paths. Use the desktop app or enter an absolute path manually.',
+  errDatasetPreviewOnly: 'The browser build cannot read an absolute local path, so only the preview was updated. Enter the dataset absolute path manually before training.',
   errImportSettings: 'Failed to import settings. Select a supported JSON file.',
 
   // ── Console ────────────────────────────────────────

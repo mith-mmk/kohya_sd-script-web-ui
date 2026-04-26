@@ -26,6 +26,25 @@ type NativePreviewItem = {
   url: string;
 };
 
+function getImageMimeType(fileName: string): string {
+  const ext = path.extname(fileName).toLowerCase();
+  switch (ext) {
+    case '.jpg':
+    case '.jpeg':
+      return 'image/jpeg';
+    case '.png':
+      return 'image/png';
+    case '.webp':
+      return 'image/webp';
+    case '.bmp':
+      return 'image/bmp';
+    case '.gif':
+      return 'image/gif';
+    default:
+      return 'application/octet-stream';
+  }
+}
+
 async function showNativeOpenDialog(options: Electron.OpenDialogOptions): Promise<Electron.OpenDialogReturnValue> {
   return mainWindow
     ? dialog.showOpenDialog(mainWindow, options)
@@ -157,10 +176,16 @@ ipcMain.handle('kohya:list-image-previews', async (_event, dirPath: string, maxI
     .sort((left, right) => left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' }));
 
   return {
-    previews: imageFiles.slice(0, Math.max(0, maxItems)).map(name => ({
-      name,
-      url: pathToFileURL(path.join(dirPath, name)).href,
-    })),
+    previews: await Promise.all(
+      imageFiles.slice(0, Math.max(0, maxItems)).map(async name => {
+        const filePath = path.join(dirPath, name);
+        const fileBytes = await fs.promises.readFile(filePath);
+        return {
+          name,
+          url: `data:${getImageMimeType(name)};base64,${fileBytes.toString('base64')}`,
+        };
+      })
+    ),
     total: imageFiles.length,
   };
 });

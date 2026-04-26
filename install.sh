@@ -8,6 +8,20 @@ ok()    { echo -e "${GREEN}[ OK ]${NC}  $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 
+install_onnx_runtime() {
+    info "      ONNX / ONNX Runtime をインストール中..."
+    if command -v nvidia-smi &>/dev/null; then
+        if $VENV_PIP install onnx onnxruntime-gpu --quiet; then
+            ok "onnx / onnxruntime-gpu インストール完了。"
+            return
+        fi
+        warn "onnxruntime-gpu のインストールに失敗したため、CPU 版へフォールバックします。"
+    fi
+
+    $VENV_PIP install onnx onnxruntime --quiet
+    ok "onnx / onnxruntime インストール完了。"
+}
+
 # ── 作業ディレクトリをスクリプトのある場所に固定 ─────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -87,6 +101,8 @@ else
     $VENV_PIP install torch torchvision --quiet
 fi
 ok "PyTorch / torchvision インストール完了。"
+
+install_onnx_runtime
 
 info "      sd-scripts の依存関係をインストール中..."
 # requirements.txt 内の -e . は CWD 相対なので sd-scripts ディレクトリで実行する

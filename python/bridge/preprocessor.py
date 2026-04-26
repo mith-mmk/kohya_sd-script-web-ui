@@ -5,6 +5,7 @@ Each step emits JSON-line events via event_emitter.
 """
 
 from __future__ import annotations
+import json
 import os
 import sys
 import subprocess
@@ -20,6 +21,11 @@ _RELATIVE_DATASET_PATH_ERROR = (
     "Dataset subset directory must be an absolute path: {path}. "
     "The browser folder picker may have returned only the folder name. "
     "Use the desktop app or enter an absolute path manually."
+)
+_WD14_DEPENDENCY_ERROR = (
+    "[preprocess] WD14 tagger requires Python modules that are not installed: {modules}. "
+    "Install `onnx` and `onnxruntime-gpu` (or `onnxruntime` for CPU-only environments), "
+    "then retry preprocessing."
 )
 
 
@@ -80,6 +86,46 @@ def _get_effective_subset_dir(
     return subset["imageDir"]
 
 
+def _get_shared_work_dir(work_dir: str) -> str:
+    shared_dir = os.path.join(os.path.dirname(work_dir), "_shared")
+    os.makedirs(shared_dir, exist_ok=True)
+    return shared_dir
+
+
+def _get_wd14_model_dir(work_dir: str) -> str:
+    model_dir = os.path.join(_get_shared_work_dir(work_dir), "wd14_tagger_model")
+    os.makedirs(model_dir, exist_ok=True)
+    return model_dir
+
+
+def _get_missing_python_modules(
+    python: str, modules: list[str], cwd: str | None = None
+) -> list[str]:
+    probe = (
+        "import importlib.util, json; "
+        f"mods = {modules!r}; "
+        "missing = [m for m in mods if importlib.util.find_spec(m) is None]; "
+        "print(json.dumps(missing))"
+    )
+    result = subprocess.run(
+        [python, "-c", probe],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=cwd,
+        env={**os.environ, **_UTF8_ENV},
+    )
+    if result.returncode != 0:
+        return modules
+
+    try:
+        parsed = json.loads(result.stdout.strip() or "[]")
+    except json.JSONDecodeError:
+        return modules
+    return [str(module) for module in parsed]
+
+
 def run_preprocessing(config: dict[str, Any]) -> bool:
     """
     Execute the full preprocessing pipeline based on preprocessOptions.
@@ -104,6 +150,7 @@ def run_preprocessing(config: dict[str, Any]) -> bool:
     run_wd14 = opts.get("runWd14Tagger", True)
     captioning = opts.get("runCaptioning", "none")
     model_type = str(config.get("modelType") or "")
+    wd14_model_dir = _get_wd14_model_dir(work_dir)
 
     if (
         opts.get("runPrepareBuckets", False)
@@ -130,10 +177,17 @@ def run_preprocessing(config: dict[str, Any]) -> bool:
 
         # Step 2: WD14 tagger
         if run_wd14:
+            missing_modules = _get_missing_python_modules(
+                python, ["onnx", "onnxruntime"], cwd=sd_dir
+            )
+            if missing_modules:
+                error(_WD14_DEPENDENCY_ERROR.format(modules=", ".join(missing_modules)))
+                return False
+            info(f"[preprocess] WD14 model cache: {wd14_model_dir}")
             steps.append(
                 (
                     f"wd14-tagger:{subset['label']}",
-                    _wd14_step(python, sd_dir, effective_dir, opts),
+                    _wd14_step(python, sd_dir, effective_dir, wd14_model_dir, opts),
                 )
             )
 
@@ -270,11 +324,15 @@ def _resize_step(
     ]
 
 
-def _wd14_step(python: str, sd_dir: str, img_dir: str, opts: dict) -> list[str]:
+def _wd14_step(
+    python: str, sd_dir: str, img_dir: str, model_dir: str, opts: dict
+) -> list[str]:
     return [
         python,
         os.path.join(sd_dir, "finetune", "tag_images_by_wd14_tagger.py"),
         "--onnx",
+        "--model_dir",
+        model_dir,
         "--batch_size",
         str(opts.get("wd14BatchSize", 8)),
         "--thresh",
