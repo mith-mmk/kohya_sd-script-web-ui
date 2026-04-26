@@ -127,7 +127,7 @@ Write-Host ""
 # ─────────────────────────────────────────────────────────────────
 # 1. Node.js 確認
 # ─────────────────────────────────────────────────────────────────
-Write-Step "[1/6] Node.js を確認中..."
+Write-Step "[1/7] Node.js を確認中..."
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
   Write-Fail "Node.js が見つかりません。https://nodejs.org/ から LTS 版をインストールしてください。"
 }
@@ -138,7 +138,7 @@ Write-Ok "Node.js $nodeVer / npm $npmVer"
 # ─────────────────────────────────────────────────────────────────
 # 2. Python 確認
 # ─────────────────────────────────────────────────────────────────
-Write-Step "[2/6] Python を確認中..."
+Write-Step "[2/7] Python を確認中..."
 $pythonCmd = $null
 $pythonExe = $null
 $pythonArgs = @()
@@ -203,25 +203,43 @@ if (-not $pythonCmd) {
 }
 
 # ─────────────────────────────────────────────────────────────────
-# 3. npm install
+# 3. sd-scripts clone
 # ─────────────────────────────────────────────────────────────────
-Write-Step "[3/6] Node.js 依存関係をインストール中..."
+Write-Step "[3/7] sd-scripts を確認中..."
+if (Test-Path "$Root\sd-scripts") {
+  Write-Ok "既存の sd-scripts ディレクトリを使用します。"
+}
+else {
+  if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    Write-Fail "sd-scripts を clone するために Git が必要です。https://git-scm.com/ をインストールしてください。"
+  }
+
+  Write-Step "      sd-scripts を clone 中..."
+  & git clone https://github.com/kohya-ss/sd-scripts.git
+  if ($LASTEXITCODE -ne 0) { Write-Fail "sd-scripts の clone に失敗しました。" }
+  Write-Ok "sd-scripts を clone しました。"
+}
+
+# ─────────────────────────────────────────────────────────────────
+# 4. npm install
+# ─────────────────────────────────────────────────────────────────
+Write-Step "[4/7] Node.js 依存関係をインストール中..."
 npm install
 if ($LASTEXITCODE -ne 0) { Write-Fail "npm install に失敗しました。" }
 Write-Ok "完了。"
 
 # ─────────────────────────────────────────────────────────────────
-# 4. TypeScript ビルド
+# 5. TypeScript ビルド
 # ─────────────────────────────────────────────────────────────────
-Write-Step "[4/6] TypeScript をビルド中..."
+Write-Step "[5/7] TypeScript をビルド中..."
 npm run build
 if ($LASTEXITCODE -ne 0) { Write-Fail "ビルドに失敗しました。" }
 Write-Ok "完了。"
 
 # ─────────────────────────────────────────────────────────────────
-# 5. Python venv セットアップ
+# 6. Python venv セットアップ
 # ─────────────────────────────────────────────────────────────────
-Write-Step "[5/6] Python 仮想環境をセットアップ中..."
+Write-Step "[6/7] Python 仮想環境をセットアップ中..."
 if ((Test-Path "$Root\venv") -and (-not (Test-Path "$Root\.venv"))) {
   Write-Warn "既存の venv が見つかりました。以後は .venv を使用するため、新規作成します。"
 }
@@ -269,9 +287,9 @@ finally {
 }
 
 # ─────────────────────────────────────────────────────────────────
-# 6. データディレクトリ作成
+# 7. データディレクトリ作成
 # ─────────────────────────────────────────────────────────────────
-Write-Step "[6/6] データディレクトリを作成中..."
+Write-Step "[7/7] データディレクトリを作成中..."
 @('data', 'work') | ForEach-Object {
   if (-not (Test-Path "$Root\$_")) { New-Item -ItemType Directory "$Root\$_" | Out-Null }
 }
