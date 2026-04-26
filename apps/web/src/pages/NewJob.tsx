@@ -52,6 +52,22 @@ type PreviewItem = {
   url: string;
 };
 
+type NativeBridge = {
+  version?: string;
+  pickDirectory?: () => Promise<string | null>;
+  pickFile?: (kind: 'model' | 'binary') => Promise<string | null>;
+  listImagePreviews?: (dirPath: string, maxItems: number) => Promise<{
+    previews: PreviewItem[];
+    total: number;
+  }>;
+};
+
+declare global {
+  interface Window {
+    __kohya__?: NativeBridge;
+  }
+}
+
 type EditableDatasetSubset = DatasetSubsetInput & {
   id: string;
   previews: PreviewItem[];
@@ -131,7 +147,9 @@ function createEmptyDatasetSubset(): EditableDatasetSubset {
 }
 
 function revokePreviewUrls(previews: PreviewItem[]): void {
-  previews.forEach(item => URL.revokeObjectURL(item.url));
+  previews.forEach(item => {
+    if (item.url.startsWith('blob:')) URL.revokeObjectURL(item.url);
+  });
 }
 
 function sanitizeDatasetSubsets(subsets: EditableDatasetSubset[]): DatasetSubsetInput[] {
@@ -245,6 +263,21 @@ function parseSerializedSettings(rawText: string): SerializedJobSettings {
 function getNativeFilePath(file: File): string | null {
   const nativePath = (file as File & { path?: string }).path;
   return typeof nativePath === 'string' && nativePath.trim() ? nativePath : null;
+}
+
+async function pickNativeDirectory(): Promise<string | null | undefined> {
+  if (!window.__kohya__?.pickDirectory) return undefined;
+  return window.__kohya__.pickDirectory();
+}
+
+async function pickNativeFile(kind: 'model' | 'binary'): Promise<string | null | undefined> {
+  if (!window.__kohya__?.pickFile) return undefined;
+  return window.__kohya__.pickFile(kind);
+}
+
+async function loadNativePreviewItems(dirPath: string): Promise<{ previews: PreviewItem[]; total: number } | undefined> {
+  if (!window.__kohya__?.listImagePreviews) return undefined;
+  return window.__kohya__.listImagePreviews(dirPath, MAX_PREVIEW_IMAGES);
 }
 
 function isLikelyAbsolutePath(value: string): boolean {
@@ -546,13 +579,31 @@ export default function NewJob() {
     el.click();
   };
 
-  const browseFolder = (field: keyof TrainJobInput) => {
+  const browseFolder = async (field: keyof TrainJobInput) => {
+    const nativePath = await pickNativeDirectory();
+    if (nativePath !== undefined) {
+      if (nativePath) {
+        setError('');
+        setInput(i => ({ ...i, [field]: nativePath }));
+      }
+      return;
+    }
+
     openFolderPicker(fullPath => {
       setInput(i => ({ ...i, [field]: fullPath }));
     });
   };
 
-  const browseFile = (field: keyof TrainJobInput) => {
+  const browseFile = async (field: keyof TrainJobInput) => {
+    const nativePath = await pickNativeFile('model');
+    if (nativePath !== undefined) {
+      if (nativePath) {
+        setError('');
+        setInput(i => ({ ...i, [field]: nativePath }));
+      }
+      return;
+    }
+
     const el = document.createElement('input');
     el.type = 'file';
     el.accept = '.safetensors,.ckpt,.pt';
@@ -571,7 +622,16 @@ export default function NewJob() {
     el.click();
   };
 
-  const browseOverrideFile = (field: keyof TrainParams) => {
+  const browseOverrideFile = async (field: keyof TrainParams) => {
+    const nativePath = await pickNativeFile('binary');
+    if (nativePath !== undefined) {
+      if (nativePath) {
+        setError('');
+        setOverrideValue(field, nativePath);
+      }
+      return;
+    }
+
     const el = document.createElement('input');
     el.type = 'file';
     el.accept = '.safetensors,.ckpt,.pt,.bin';
@@ -590,13 +650,36 @@ export default function NewJob() {
     el.click();
   };
 
-  const browseOverrideFolder = (field: keyof TrainParams) => {
+  const browseOverrideFolder = async (field: keyof TrainParams) => {
+    const nativePath = await pickNativeDirectory();
+    if (nativePath !== undefined) {
+      if (nativePath) {
+        setError('');
+        setOverrideValue(field, nativePath);
+      }
+      return;
+    }
+
     openFolderPicker(fullPath => {
       setOverrideValue(field, fullPath);
     });
   };
 
-  const browseSubsetFolder = (subsetId: string) => {
+  const browseSubsetFolder = async (subsetId: string) => {
+    const nativePath = await pickNativeDirectory();
+    if (nativePath !== undefined) {
+      if (!nativePath) return;
+
+      const previewResult = await loadNativePreviewItems(nativePath);
+      const { previews, total } = previewResult ?? { previews: [], total: 0 };
+      setError('');
+      updateDatasetSubset(subsetId, subset => {
+        revokePreviewUrls(subset.previews);
+        return { ...subset, imageDir: nativePath, previews, previewTotal: total };
+      });
+      return;
+    }
+
     openFolderPicker((fullPath, files) => {
       const { previews, total } = buildPreviewItems(files);
       updateDatasetSubset(subsetId, subset => {

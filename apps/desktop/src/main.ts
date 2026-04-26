@@ -1,11 +1,13 @@
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, shell, dialog, ipcMain } from 'electron';
 import { spawn, ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import http from 'http';
+import { pathToFileURL } from 'url';
 
 const SERVER_PORT = 3001;
 const SERVER_URL = `http://127.0.0.1:${SERVER_PORT}`;
+const IMAGE_FILE_RE = /\.(png|jpe?g|webp|bmp|gif)$/iu;
 // IS_DEV: true when NODE_ENV=development OR when running from the source tree
 // (i.e. not inside an asar/packaged app)
 const IS_DEV =
@@ -18,6 +20,17 @@ if (IS_DEV) {
 
 let mainWindow: BrowserWindow | null = null;
 let serverProcess: ChildProcess | null = null;
+
+type NativePreviewItem = {
+  name: string;
+  url: string;
+};
+
+async function showNativeOpenDialog(options: Electron.OpenDialogOptions): Promise<Electron.OpenDialogReturnValue> {
+  return mainWindow
+    ? dialog.showOpenDialog(mainWindow, options)
+    : dialog.showOpenDialog(options);
+}
 
 type RuntimePaths = {
   serverEntry: string;
@@ -112,6 +125,45 @@ function assertRuntimePaths(runtimePaths: RuntimePaths): void {
     throw new Error(`Missing runtime resources: ${missing.join(', ')}`);
   }
 }
+
+ipcMain.handle('kohya:pick-directory', async () => {
+  const result = await showNativeOpenDialog({
+    properties: ['openDirectory'],
+  });
+
+  return result.canceled ? null : (result.filePaths[0] ?? null);
+});
+
+ipcMain.handle('kohya:pick-file', async (_event, kind: 'model' | 'binary') => {
+  const filters = kind === 'binary'
+    ? [{ name: 'Model and binary files', extensions: ['safetensors', 'ckpt', 'pt', 'bin'] }]
+    : [{ name: 'Model files', extensions: ['safetensors', 'ckpt', 'pt'] }];
+
+  const result = await showNativeOpenDialog({
+    properties: ['openFile'],
+    filters,
+  });
+
+  return result.canceled ? null : (result.filePaths[0] ?? null);
+});
+
+ipcMain.handle('kohya:list-image-previews', async (_event, dirPath: string, maxItems: number) => {
+  if (!dirPath) return { previews: [] as NativePreviewItem[], total: 0 };
+
+  const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+  const imageFiles = entries
+    .filter(entry => entry.isFile() && IMAGE_FILE_RE.test(entry.name))
+    .map(entry => entry.name)
+    .sort((left, right) => left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' }));
+
+  return {
+    previews: imageFiles.slice(0, Math.max(0, maxItems)).map(name => ({
+      name,
+      url: pathToFileURL(path.join(dirPath, name)).href,
+    })),
+    total: imageFiles.length,
+  };
+});
 
 // ── Start the Node.js API server ─────────────────────────────────────────────
 function startServer(): Promise<void> {
