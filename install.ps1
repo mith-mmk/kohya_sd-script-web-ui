@@ -142,42 +142,51 @@ Write-Step "[2/6] Python を確認中..."
 $pythonCmd = $null
 $pythonExe = $null
 $pythonArgs = @()
-foreach ($candidate in @(
-    @{ exe = 'py'; args = @('-3.10') },
-    @{ exe = 'py'; args = @('-3.11') },
-    @{ exe = 'py'; args = @('-3.12') },
-    @{ exe = 'python'; args = @() },
-    @{ exe = 'python3'; args = @() },
-    @{ exe = 'py'; args = @() }
-  )) {
-  $exe = $candidate.exe
-  $args = $candidate.args
-  if (-not (Get-Command $exe -ErrorAction SilentlyContinue)) { continue }
-
-  $ver = & $exe @args --version 2>&1
+$localPyExe = "$Root\.python\python.exe"
+if (Test-Path $localPyExe) {
+  $ver = & $localPyExe --version 2>&1
   if ($ver -match '(\d+)\.(\d+)') {
     $major = [int]$Matches[1]
     $minor = [int]$Matches[2]
     if ($major -eq 3 -and $minor -ge 10 -and $minor -le 12) {
-      $pythonCmd = "$exe $($args -join ' ')".Trim()
-      $pythonExe = $exe
-      $pythonArgs = $args
-      Write-Ok "$pythonCmd ($ver)"
-      break
+      Write-Ok "ローカル Python を使用します: $ver ($localPyExe)"
+      $pythonExe = $localPyExe
+      $pythonArgs = @()
+      $pythonCmd = $localPyExe
     }
   }
 }
+
 if (-not $pythonCmd) {
-  # ── ローカル .python\ を確認 ──────────────────────────────────
-  $localPyExe = "$Root\.python\python.exe"
-  if (Test-Path $localPyExe) {
-    $ver = & $localPyExe --version 2>&1
-    Write-Ok "ローカル Python を使用します: $ver ($localPyExe)"
-    $pythonExe = $localPyExe
-    $pythonArgs = @()
-    $pythonCmd = $localPyExe
+  foreach ($candidate in @(
+      @{ exe = 'py'; args = @('-3.12') },
+      @{ exe = 'py'; args = @('-3.11') },
+      @{ exe = 'py'; args = @('-3.10') },
+      @{ exe = 'python'; args = @() },
+      @{ exe = 'python3'; args = @() },
+      @{ exe = 'py'; args = @() }
+    )) {
+    $exe = $candidate.exe
+    $args = $candidate.args
+    if (-not (Get-Command $exe -ErrorAction SilentlyContinue)) { continue }
+
+    $ver = & $exe @args --version 2>&1
+    if ($ver -match '(\d+)\.(\d+)') {
+      $major = [int]$Matches[1]
+      $minor = [int]$Matches[2]
+      if ($major -eq 3 -and $minor -ge 10 -and $minor -le 12) {
+        $pythonCmd = "$exe $($args -join ' ')".Trim()
+        $pythonExe = $exe
+        $pythonArgs = $args
+        Write-Ok "$pythonCmd ($ver)"
+        break
+      }
+    }
   }
-  elseif ($AutoPython) {
+}
+
+if (-not $pythonCmd) {
+  if ($AutoPython) {
     Write-Warn "Python 3.10-3.12 が見つかりません。python-build-standalone から取得します..."
     $localPyExe = Invoke-DownloadPython -Version $PythonVersion -DestDir "$Root\.python"
     $pythonExe = $localPyExe

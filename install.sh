@@ -46,7 +46,7 @@ ok "Node.js $NODE_VER を確認しました。"
 # ─────────────────────────────────────────────────────────────────
 info "[2/6] Python を確認中..."
 PYTHON_CMD=""
-for cmd in python3 python; do
+for cmd in python3.12 python3.11 python3.10 python3 python; do
     if command -v "$cmd" &>/dev/null; then
         PY_VER=$("$cmd" --version 2>&1 | awk '{print $2}')
         PY_MAJOR=$(echo "$PY_VER" | cut -d. -f1)
