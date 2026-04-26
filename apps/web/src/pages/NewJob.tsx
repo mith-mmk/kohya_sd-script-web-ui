@@ -58,11 +58,24 @@ type EditableDatasetSubset = DatasetSubsetInput & {
   previewTotal: number;
 };
 
+type PathHistoryKey =
+  | 'sdScriptsDir'
+  | 'baseModelPath'
+  | 'outputDir'
+  | 'clipL'
+  | 't5xxl'
+  | 'ae'
+  | 'qwen3'
+  | 'vae'
+  | 't5TokenizerPath'
+  | 'llmAdapterPath';
+
 const S: Record<string, React.CSSProperties> = {
   h1: { fontSize: 20, fontWeight: 700, marginBottom: 24 },
   form: { maxWidth: 680, display: 'flex', flexDirection: 'column', gap: 20 },
   section: { background: '#1a1a1a', borderRadius: 8, padding: '16px 20px', border: '1px solid #2a2a2a' },
   sectionTitle: { fontSize: 13, fontWeight: 700, color: '#a78bfa', marginBottom: 14, textTransform: 'uppercase', letterSpacing: 1 },
+  topActions: { display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' },
   row: { display: 'flex', flexDirection: 'column', gap: 4 },
   label: { fontSize: 12, color: '#888' },
   input: { background: '#0f0f0f', border: '1px solid #333', borderRadius: 6, color: '#e0e0e0', padding: '7px 10px', fontSize: 13, flex: 1 },
@@ -81,6 +94,8 @@ const S: Record<string, React.CSSProperties> = {
   historyTitle: { fontSize: 13, fontWeight: 700, color: '#e5e7eb', marginBottom: 4 },
   historyMeta: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 6, fontSize: 12, color: '#777', minWidth: 360 },
   historyButtons: { display: 'flex', gap: 8, flexShrink: 0 },
+  pathSuggestionRow: { display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 },
+  pathSuggestionBtn: { background: '#171717', color: '#9ca3af', border: '1px solid #333', borderRadius: 999, padding: '4px 10px', cursor: 'pointer', fontSize: 11, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   subsetCard: { background: '#141414', border: '1px solid #252525', borderRadius: 8, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 },
   subsetHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
   subsetTitle: { fontSize: 13, fontWeight: 700, color: '#e5e7eb' },
@@ -232,6 +247,51 @@ function getNativeFilePath(file: File): string | null {
   return typeof nativePath === 'string' && nativePath.trim() ? nativePath : null;
 }
 
+function isLikelyAbsolutePath(value: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith('\\\\') || value.startsWith('/');
+}
+
+function collectRecentValues(values: Array<string | undefined>, limit = HISTORY_LIMIT): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const rawValue of values) {
+    const value = rawValue?.trim();
+    if (!value || !isLikelyAbsolutePath(value) || seen.has(value)) continue;
+    seen.add(value);
+    result.push(value);
+    if (result.length >= limit) break;
+  }
+
+  return result;
+}
+
+function getStringTrainParam(params: Partial<TrainParams> | TrainParams | undefined, field: keyof TrainParams): string | undefined {
+  if (!params) return undefined;
+  const value = params[field];
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function buildPathHistory(jobs: TrainJob[], modelType: ModelType): Record<PathHistoryKey, string[]> {
+  const modelJobs = jobs.filter(job => job.modelType === modelType);
+  const getPathFromJob = (job: TrainJob, field: keyof TrainParams): string | undefined => {
+    return getStringTrainParam(job.input.overrides, field) ?? getStringTrainParam(job.params, field);
+  };
+
+  return {
+    sdScriptsDir: collectRecentValues(jobs.map(job => job.input.sdScriptsDir)),
+    baseModelPath: collectRecentValues(modelJobs.map(job => job.input.baseModelPath)),
+    outputDir: collectRecentValues(jobs.map(job => job.input.outputDir)),
+    clipL: collectRecentValues(modelJobs.map(job => getPathFromJob(job, 'clipL'))),
+    t5xxl: collectRecentValues(modelJobs.map(job => getPathFromJob(job, 't5xxl'))),
+    ae: collectRecentValues(modelJobs.map(job => getPathFromJob(job, 'ae'))),
+    qwen3: collectRecentValues(modelJobs.map(job => getPathFromJob(job, 'qwen3'))),
+    vae: collectRecentValues(modelJobs.map(job => getPathFromJob(job, 'vae'))),
+    t5TokenizerPath: collectRecentValues(modelJobs.map(job => getPathFromJob(job, 't5TokenizerPath'))),
+    llmAdapterPath: collectRecentValues(modelJobs.map(job => getPathFromJob(job, 'llmAdapterPath'))),
+  };
+}
+
 export default function NewJob() {
   const navigate = useNavigate();
   const { t } = useT();
@@ -247,6 +307,7 @@ export default function NewJob() {
 
   const [preproc, setPreproc] = useState<Partial<PreprocessOptions>>(INITIAL_PREPROCESS_OPTIONS);
   const prepareBucketsSupported = !PREPARE_BUCKETS_UNSUPPORTED.has(input.modelType);
+  const pathHistory = buildPathHistory(jobs, input.modelType);
   const historyJobs = jobs
     .filter(job => job.modelType === input.modelType && job.status !== 'running')
     .slice(0, HISTORY_LIMIT);
@@ -404,6 +465,10 @@ export default function NewJob() {
       setInput(i => ({ ...i, [field]: e.target.value })),
   });
 
+  const setInputValue = (field: keyof TrainJobInput, value: string) => {
+    setInput(current => ({ ...current, [field]: value }));
+  };
+
   const getOverrideValue = (field: keyof TrainParams): string => {
     const value = input.overrides?.[field];
     return typeof value === 'string' ? value : '';
@@ -430,6 +495,26 @@ export default function NewJob() {
       case 'llmAdapterPath': return t.fieldAnimaLlmAdapterPath;
       default: return String(field);
     }
+  };
+
+  const renderPathSuggestions = (values: string[], onSelect: (value: string) => void) => {
+    if (!values.length) return null;
+
+    return (
+      <div style={S.pathSuggestionRow}>
+        {values.slice(0, 4).map(value => (
+          <button
+            key={value}
+            type="button"
+            style={S.pathSuggestionBtn}
+            title={value}
+            onClick={() => onSelect(value)}
+          >
+            {value}
+          </button>
+        ))}
+      </div>
+    );
   };
 
   const updateDatasetSubset = (
@@ -547,46 +632,21 @@ export default function NewJob() {
     <div>
       <h1 style={S.h1}>{t.newJobTitle}</h1>
       <form style={S.form} onSubmit={handleSubmit}>
-        <div style={S.section}>
-          <div style={S.sectionActions}>
-            <div style={S.sectionTitle}>{t.sectionHistory}</div>
-            <div style={S.historyActions}>
-              <button type="button" style={S.actionBtn} onClick={exportSettings}>{t.exportSettings}</button>
-              <button type="button" style={S.actionBtn} onClick={() => importRef.current?.click()}>{t.importSettings}</button>
-              <input
-                ref={importRef}
-                type="file"
-                accept="application/json,.json"
-                style={{ display: 'none' }}
-                onChange={async e => {
-                  await importSettings(e.target.files?.[0] ?? null);
-                  e.currentTarget.value = '';
-                }}
-              />
-            </div>
-          </div>
-          {historyJobs.length === 0 ? (
-            <div style={S.hint}>{t.historyEmpty}</div>
-          ) : (
-            <div style={S.historyList}>
-              {historyJobs.map(job => (
-                <div key={job.id} style={S.historyCard}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={S.historyTitle}>{job.name || t.historyImported}</div>
-                    <div style={S.historyMeta}>
-                      <span>{t.historyLastUsed}: {new Date(job.createdAt).toLocaleString()}</span>
-                      <span>{t.historyOutputName}: {job.input.outputName || '—'}</span>
-                      <span>{t.historyStatus}: {job.status}</span>
-                    </div>
-                  </div>
-                  <div style={S.historyButtons}>
-                    <button type="button" style={S.actionBtn} onClick={() => applyHistoryJob(job)}>{t.historyApply}</button>
-                    <button type="button" style={S.removeBtn} onClick={() => deleteHistoryJob(job)}>{t.historyDelete}</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+        <div style={S.topActions}>
+          <button type="button" style={S.actionBtn} onClick={exportSettings}>{t.exportSettings}</button>
+          <button type="button" style={S.actionBtn} onClick={() => importRef.current?.click()}>{t.importSettings}</button>
+          <input
+            ref={importRef}
+            type="file"
+            accept="application/json,.json"
+            style={{ display: 'none' }}
+            onChange={async e => {
+              const inputEl = e.currentTarget;
+              const file = inputEl.files?.[0] ?? null;
+              await importSettings(file);
+              inputEl.value = '';
+            }}
+          />
         </div>
 
         {/* ── Basic info ── */}
@@ -616,9 +676,13 @@ export default function NewJob() {
             <div style={S.row}>
               <label style={S.label}>{t.fieldKohyaSsDir}</label>
               <div style={S.inputRow}>
-                <input style={S.input} placeholder={t.fieldKohyaSsDirPlaceholder} {...inp('sdScriptsDir')} />
+                <input style={S.input} placeholder={t.fieldKohyaSsDirPlaceholder} list="path-history-sdScriptsDir" {...inp('sdScriptsDir')} />
                 <button type="button" style={S.browseBtn} onClick={() => browseFolder('sdScriptsDir')}>{t.browseFolder}</button>
               </div>
+              {renderPathSuggestions(pathHistory.sdScriptsDir, value => setInputValue('sdScriptsDir', value))}
+              <datalist id="path-history-sdScriptsDir">
+                {pathHistory.sdScriptsDir.map(value => <option key={value} value={value} />)}
+              </datalist>
             </div>
             <label style={S.checkRow}>
               <input type="checkbox" checked={!!preproc.skipPreprocessing}
@@ -718,17 +782,25 @@ export default function NewJob() {
             <div style={S.row}>
               <label style={S.label}>{t.fieldBaseModelPath}</label>
               <div style={S.inputRow}>
-                <input style={S.input} placeholder={t.fieldBaseModelPath} {...inp('baseModelPath')} />
+                <input style={S.input} placeholder={t.fieldBaseModelPath} list="path-history-baseModelPath" {...inp('baseModelPath')} />
                 <button type="button" style={S.browseBtn} onClick={() => browseFile('baseModelPath')}>{t.browseFile}</button>
               </div>
+              {renderPathSuggestions(pathHistory.baseModelPath, value => setInputValue('baseModelPath', value))}
+              <datalist id="path-history-baseModelPath">
+                {pathHistory.baseModelPath.map(value => <option key={value} value={value} />)}
+              </datalist>
             </div>
             {/* Output folder */}
             <div style={S.row}>
               <label style={S.label}>{t.fieldOutputDir}</label>
               <div style={S.inputRow}>
-                <input style={S.input} placeholder={t.fieldOutputDir} {...inp('outputDir')} />
+                <input style={S.input} placeholder={t.fieldOutputDir} list="path-history-outputDir" {...inp('outputDir')} />
                 <button type="button" style={S.browseBtn} onClick={() => browseFolder('outputDir')}>{t.browseFolder}</button>
               </div>
+              {renderPathSuggestions(pathHistory.outputDir, value => setInputValue('outputDir', value))}
+              <datalist id="path-history-outputDir">
+                {pathHistory.outputDir.map(value => <option key={value} value={value} />)}
+              </datalist>
             </div>
             {/* Output name — no browse */}
             <div style={S.row}>
@@ -743,11 +815,16 @@ export default function NewJob() {
                     <input
                       style={S.input}
                       placeholder={t.fieldFluxClipL}
+                      list="path-history-clipL"
                       value={getOverrideValue('clipL')}
                       onChange={e => setOverrideValue('clipL', e.target.value)}
                     />
                     <button type="button" style={S.browseBtn} onClick={() => browseOverrideFile('clipL')}>{t.browseFile}</button>
                   </div>
+                  {renderPathSuggestions(pathHistory.clipL, value => setOverrideValue('clipL', value))}
+                  <datalist id="path-history-clipL">
+                    {pathHistory.clipL.map(value => <option key={value} value={value} />)}
+                  </datalist>
                 </div>
                 <div style={S.row}>
                   <label style={S.label}>{t.fieldFluxT5xxl}</label>
@@ -755,11 +832,16 @@ export default function NewJob() {
                     <input
                       style={S.input}
                       placeholder={t.fieldFluxT5xxl}
+                      list="path-history-t5xxl"
                       value={getOverrideValue('t5xxl')}
                       onChange={e => setOverrideValue('t5xxl', e.target.value)}
                     />
                     <button type="button" style={S.browseBtn} onClick={() => browseOverrideFile('t5xxl')}>{t.browseFile}</button>
                   </div>
+                  {renderPathSuggestions(pathHistory.t5xxl, value => setOverrideValue('t5xxl', value))}
+                  <datalist id="path-history-t5xxl">
+                    {pathHistory.t5xxl.map(value => <option key={value} value={value} />)}
+                  </datalist>
                 </div>
                 <div style={S.row}>
                   <label style={S.label}>{t.fieldFluxAe}</label>
@@ -767,11 +849,16 @@ export default function NewJob() {
                     <input
                       style={S.input}
                       placeholder={t.fieldFluxAe}
+                      list="path-history-ae"
                       value={getOverrideValue('ae')}
                       onChange={e => setOverrideValue('ae', e.target.value)}
                     />
                     <button type="button" style={S.browseBtn} onClick={() => browseOverrideFile('ae')}>{t.browseFile}</button>
                   </div>
+                  {renderPathSuggestions(pathHistory.ae, value => setOverrideValue('ae', value))}
+                  <datalist id="path-history-ae">
+                    {pathHistory.ae.map(value => <option key={value} value={value} />)}
+                  </datalist>
                 </div>
               </>
             )}
@@ -783,11 +870,16 @@ export default function NewJob() {
                     <input
                       style={S.input}
                       placeholder={t.fieldAnimaQwen3}
+                      list="path-history-qwen3"
                       value={getOverrideValue('qwen3')}
                       onChange={e => setOverrideValue('qwen3', e.target.value)}
                     />
                     <button type="button" style={S.browseBtn} onClick={() => browseOverrideFile('qwen3')}>{t.browseFile}</button>
                   </div>
+                  {renderPathSuggestions(pathHistory.qwen3, value => setOverrideValue('qwen3', value))}
+                  <datalist id="path-history-qwen3">
+                    {pathHistory.qwen3.map(value => <option key={value} value={value} />)}
+                  </datalist>
                 </div>
                 <div style={S.row}>
                   <label style={S.label}>{t.fieldAnimaVae}</label>
@@ -795,11 +887,16 @@ export default function NewJob() {
                     <input
                       style={S.input}
                       placeholder={t.fieldAnimaVae}
+                      list="path-history-vae"
                       value={getOverrideValue('vae')}
                       onChange={e => setOverrideValue('vae', e.target.value)}
                     />
                     <button type="button" style={S.browseBtn} onClick={() => browseOverrideFile('vae')}>{t.browseFile}</button>
                   </div>
+                  {renderPathSuggestions(pathHistory.vae, value => setOverrideValue('vae', value))}
+                  <datalist id="path-history-vae">
+                    {pathHistory.vae.map(value => <option key={value} value={value} />)}
+                  </datalist>
                 </div>
                 <div style={S.row}>
                   <label style={S.label}>{t.fieldAnimaT5TokenizerPath}</label>
@@ -807,11 +904,16 @@ export default function NewJob() {
                     <input
                       style={S.input}
                       placeholder={t.fieldAnimaT5TokenizerPath}
+                      list="path-history-t5TokenizerPath"
                       value={getOverrideValue('t5TokenizerPath')}
                       onChange={e => setOverrideValue('t5TokenizerPath', e.target.value)}
                     />
                     <button type="button" style={S.browseBtn} onClick={() => browseOverrideFolder('t5TokenizerPath')}>{t.browseFolder}</button>
                   </div>
+                  {renderPathSuggestions(pathHistory.t5TokenizerPath, value => setOverrideValue('t5TokenizerPath', value))}
+                  <datalist id="path-history-t5TokenizerPath">
+                    {pathHistory.t5TokenizerPath.map(value => <option key={value} value={value} />)}
+                  </datalist>
                 </div>
                 <div style={S.row}>
                   <label style={S.label}>{t.fieldAnimaLlmAdapterPath}</label>
@@ -819,11 +921,16 @@ export default function NewJob() {
                     <input
                       style={S.input}
                       placeholder={t.fieldAnimaLlmAdapterPath}
+                      list="path-history-llmAdapterPath"
                       value={getOverrideValue('llmAdapterPath')}
                       onChange={e => setOverrideValue('llmAdapterPath', e.target.value)}
                     />
                     <button type="button" style={S.browseBtn} onClick={() => browseOverrideFile('llmAdapterPath')}>{t.browseFile}</button>
                   </div>
+                  {renderPathSuggestions(pathHistory.llmAdapterPath, value => setOverrideValue('llmAdapterPath', value))}
+                  <datalist id="path-history-llmAdapterPath">
+                    {pathHistory.llmAdapterPath.map(value => <option key={value} value={value} />)}
+                  </datalist>
                 </div>
               </>
             )}
@@ -875,6 +982,34 @@ export default function NewJob() {
             </label>
             {!prepareBucketsSupported && (
               <div style={S.hint}>{t.prepareBucketsUnsupported(input.modelType.toUpperCase())}</div>
+            )}
+          </div>
+        </details>
+
+        <details style={S.section}>
+          <summary style={S.summary}>▶ {t.sectionHistory}</summary>
+          <div style={{ marginTop: 14 }}>
+            {historyJobs.length === 0 ? (
+              <div style={S.hint}>{t.historyEmpty}</div>
+            ) : (
+              <div style={S.historyList}>
+                {historyJobs.map(job => (
+                  <div key={job.id} style={S.historyCard}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={S.historyTitle}>{job.name || t.historyImported}</div>
+                      <div style={S.historyMeta}>
+                        <span>{t.historyLastUsed}: {new Date(job.createdAt).toLocaleString()}</span>
+                        <span>{t.historyOutputName}: {job.input.outputName || '—'}</span>
+                        <span>{t.historyStatus}: {job.status}</span>
+                      </div>
+                    </div>
+                    <div style={S.historyButtons}>
+                      <button type="button" style={S.actionBtn} onClick={() => applyHistoryJob(job)}>{t.historyApply}</button>
+                      <button type="button" style={S.removeBtn} onClick={() => deleteHistoryJob(job)}>{t.historyDelete}</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </details>
