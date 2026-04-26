@@ -14,6 +14,10 @@ from typing import Any
 from event_emitter import info, warn, error, parse_and_emit_training_line
 
 
+_PREPARE_BUCKETS_SUPPORTED = {"sd1x", "sdxl"}
+_UTF8_ENV = {"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+
+
 def _subset_work_key(index: int, image_dir: str) -> str:
     base_name = Path(image_dir).name or f"subset_{index + 1}"
     safe_name = "".join(ch if ch.isalnum() else "_" for ch in base_name).strip("_")
@@ -88,6 +92,16 @@ def run_preprocessing(config: dict[str, Any]) -> bool:
     run_resize = opts.get("runResize", False)
     run_wd14 = opts.get("runWd14Tagger", True)
     captioning = opts.get("runCaptioning", "none")
+    model_type = str(config.get("modelType") or "")
+
+    if (
+        opts.get("runPrepareBuckets", False)
+        and model_type not in _PREPARE_BUCKETS_SUPPORTED
+    ):
+        error(
+            f"[preprocess] runPrepareBuckets is not supported for modelType={model_type or 'unknown'}"
+        )
+        return False
 
     # Step 1: Resize images
     if run_resize:
@@ -204,7 +218,7 @@ def run_preprocessing(config: dict[str, Any]) -> bool:
 
 
 def _run_cmd(step_name: str, cmd: list[str], cwd: str | None = None) -> bool:
-    env = os.environ.copy()
+    env = {**os.environ, **_UTF8_ENV}
     if cwd:
         existing_pythonpath = env.get("PYTHONPATH")
         env["PYTHONPATH"] = (

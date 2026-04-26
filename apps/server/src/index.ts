@@ -2,11 +2,14 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import staticFiles from '@fastify/static';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { jobRoutes } from './routes/jobs.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+loadEnvFile(path.resolve(__dirname, '../../../.env'));
+
+const { jobRoutes } = await import('./routes/jobs.js');
 
 const app = Fastify({
   logger: { level: process.env['LOG_LEVEL'] ?? 'info' },
@@ -33,6 +36,29 @@ await app.register(jobRoutes);
 
 const PORT = Number(process.env['PORT'] ?? 3001);
 const HOST = process.env['HOST'] ?? '127.0.0.1';
+
+function loadEnvFile(envPath: string): void {
+  if (!fs.existsSync(envPath)) return;
+
+  const envText = fs.readFileSync(envPath, 'utf-8');
+  for (const rawLine of envText.split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+
+    const separatorIndex = line.indexOf('=');
+    if (separatorIndex <= 0) continue;
+
+    const key = line.slice(0, separatorIndex).trim();
+    if (!key || process.env[key] !== undefined) continue;
+
+    let value = line.slice(separatorIndex + 1);
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+
+    process.env[key] = value;
+  }
+}
 
 try {
   await app.listen({ port: PORT, host: HOST });

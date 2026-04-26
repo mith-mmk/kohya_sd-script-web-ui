@@ -54,6 +54,13 @@ export interface Translations {
   fieldOutputDir: string;
   fieldOutputName: string;
   fieldOutputNamePlaceholder: string;
+  fieldFluxClipL: string;
+  fieldFluxT5xxl: string;
+  fieldFluxAe: string;
+  fieldAnimaQwen3: string;
+  fieldAnimaVae: string;
+  fieldAnimaT5TokenizerPath: string;
+  fieldAnimaLlmAdapterPath: string;
   datasetSubsetTitle: (n: number) => string;
   addDatasetSubset: string;
   removeDatasetSubset: string;
@@ -71,6 +78,7 @@ export interface Translations {
   captionBlip: string;
   captionGit: string;
   prepareBuckets: string;
+  prepareBucketsUnsupported: (model: string) => string;
   skipPreprocessing: string;
   submitBtn: string;
   submitting: string;
@@ -140,6 +148,13 @@ const ja: Translations = {
   fieldOutputDir: '出力フォルダ',
   fieldOutputName: '出力ファイル名（拡張子なし）',
   fieldOutputNamePlaceholder: '例: my-lora',
+  fieldFluxClipL: 'FLUX CLIP-L パス',
+  fieldFluxT5xxl: 'FLUX T5XXL パス',
+  fieldFluxAe: 'FLUX AE パス',
+  fieldAnimaQwen3: 'Anima Qwen3 パス',
+  fieldAnimaVae: 'Anima VAE パス',
+  fieldAnimaT5TokenizerPath: 'Anima T5 tokenizer パス（任意）',
+  fieldAnimaLlmAdapterPath: 'Anima LLM adapter パス（任意）',
   datasetSubsetTitle: (n: number) => `サブセット ${n}`,
   addDatasetSubset: '+ サブセット追加',
   removeDatasetSubset: '削除',
@@ -157,6 +172,7 @@ const ja: Translations = {
   captionBlip: 'BLIP',
   captionGit: 'GIT',
   prepareBuckets: 'バケット & 潜在変数を事前計算',
+  prepareBucketsUnsupported: (model: string) => `${model} では prepare buckets は未対応です。`,
   skipPreprocessing: '前処理をスキップ（タグ・キャプションは既に用意済み）',
   submitBtn: '▶ 学習開始',
   submitting: '開始中…',

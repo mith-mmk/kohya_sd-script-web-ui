@@ -80,6 +80,14 @@ VENV_PIP="$SCRIPT_DIR/.venv/bin/pip"
 info "      pip をアップグレード中..."
 $VENV_PYTHON -m pip install --upgrade pip --quiet
 
+info "      PyTorch / torchvision をインストール中..."
+if [ -n "${PYTORCH_INDEX_URL:-}" ]; then
+    $VENV_PIP install torch torchvision --index-url "$PYTORCH_INDEX_URL" --quiet
+else
+    $VENV_PIP install torch torchvision --quiet
+fi
+ok "PyTorch / torchvision インストール完了。"
+
 info "      sd-scripts の依存関係をインストール中..."
 # requirements.txt 内の -e . は CWD 相対なので sd-scripts ディレクトリで実行する
 (cd "$SCRIPT_DIR/sd-scripts" && $VENV_PIP install -r requirements.txt --quiet) && \

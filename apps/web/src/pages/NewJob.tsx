@@ -1,12 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
-import type { DatasetSubsetInput, TrainJobInput, PreprocessOptions, LoRAProfile, ModelType } from '../types/job.js';
+import type { DatasetSubsetInput, TrainJobInput, PreprocessOptions, LoRAProfile, ModelType, TrainParams } from '../types/job.js';
 import { useT } from '../i18n/LangContext.js';
 
 const MODEL_TYPES: ModelType[] = ['sd1x', 'sdxl', 'flux', 'anima'];
 const MAX_PREVIEW_IMAGES = 12;
 const IMAGE_FILE_RE = /\.(png|jpe?g|webp|bmp|gif)$/i;
+const PREPARE_BUCKETS_UNSUPPORTED = new Set<ModelType>(['flux', 'anima']);
+const MODEL_REQUIRED_OVERRIDE_FIELDS: Partial<Record<ModelType, Array<keyof TrainParams>>> = {
+  flux: ['clipL', 't5xxl', 'ae'],
+  anima: ['qwen3', 'vae'],
+};
 
 type PreviewItem = {
   name: string;
@@ -80,6 +85,22 @@ function sanitizeDatasetSubsets(subsets: EditableDatasetSubset[]): DatasetSubset
     .filter(subset => subset.imageDir);
 }
 
+function sanitizeOverrides(overrides: Partial<TrainParams> | undefined): Partial<TrainParams> | undefined {
+  if (!overrides) return undefined;
+
+  const normalized = Object.entries(overrides).reduce<Partial<TrainParams>>((acc, [key, value]) => {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) return acc;
+      return { ...acc, [key]: trimmed };
+    }
+    if (value === undefined || value === null) return acc;
+    return { ...acc, [key]: value };
+  }, {});
+
+  return Object.keys(normalized).length ? normalized : undefined;
+}
+
 function buildPreviewItems(files: FileList | null): { previews: PreviewItem[]; total: number } {
   const imageFiles = Array.from(files ?? []).filter(file => {
     const hasImageMime = file.type.startsWith('image/');
@@ -113,6 +134,7 @@ export default function NewJob() {
     runWd14Tagger: true, wd14Threshold: 0.35, wd14BatchSize: 8,
     runCaptioning: 'none', runPrepareBuckets: false, skipPreprocessing: false,
   });
+  const prepareBucketsSupported = !PREPARE_BUCKETS_UNSUPPORTED.has(input.modelType);
 
   useEffect(() => {
     api.listProfiles().then(ps => {
@@ -130,6 +152,12 @@ export default function NewJob() {
     datasetSubsetsRef.current.forEach(subset => revokePreviewUrls(subset.previews));
   }, []);
 
+  useEffect(() => {
+    if (!prepareBucketsSupported && preproc.runPrepareBuckets) {
+      setPreproc(current => ({ ...current, runPrepareBuckets: false }));
+    }
+  }, [prepareBucketsSupported, preproc.runPrepareBuckets]);
+
   // Sync default profile when model type changes
   const handleModelChange = (mt: ModelType) => {
     const def = profiles.find(p => p.id === `${mt}-standard`);
@@ -140,6 +168,7 @@ export default function NewJob() {
     e.preventDefault();
     setError('');
     const normalizedSubsets = sanitizeDatasetSubsets(datasetSubsets);
+    const normalizedOverrides = sanitizeOverrides(input.overrides);
     if (!normalizedSubsets.length) {
       setError(t.errRequired(t.fieldDatasetDir));
       return;
@@ -150,6 +179,19 @@ export default function NewJob() {
       if (!input[k]) { setError(t.errRequired(k)); return; }
     }
 
+    for (const field of MODEL_REQUIRED_OVERRIDE_FIELDS[input.modelType] ?? []) {
+      const value = normalizedOverrides?.[field];
+      if (typeof value !== 'string' || !value) {
+        setError(t.errRequired(getOverrideLabel(field)));
+        return;
+      }
+    }
+
+    if (!prepareBucketsSupported && preproc.runPrepareBuckets) {
+      setError(t.prepareBucketsUnsupported(input.modelType.toUpperCase()));
+      return;
+    }
+
     const primarySubset = normalizedSubsets[0];
     const payload: TrainJobInput = {
       ...input,
@@ -157,6 +199,7 @@ export default function NewJob() {
       datasetSubsets: normalizedSubsets,
       triggerWord: primarySubset.triggerWord,
       repeatCount: primarySubset.repeatCount,
+      overrides: normalizedOverrides,
     };
 
     setLoading(true);
@@ -176,6 +219,34 @@ export default function NewJob() {
     onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
       setInput(i => ({ ...i, [field]: e.target.value })),
   });
+
+  const getOverrideValue = (field: keyof TrainParams): string => {
+    const value = input.overrides?.[field];
+    return typeof value === 'string' ? value : '';
+  };
+
+  const setOverrideValue = (field: keyof TrainParams, value: string) => {
+    setInput(current => ({
+      ...current,
+      overrides: {
+        ...(current.overrides ?? {}),
+        [field]: value,
+      },
+    }));
+  };
+
+  const getOverrideLabel = (field: keyof TrainParams): string => {
+    switch (field) {
+      case 'clipL': return t.fieldFluxClipL;
+      case 't5xxl': return t.fieldFluxT5xxl;
+      case 'ae': return t.fieldFluxAe;
+      case 'qwen3': return t.fieldAnimaQwen3;
+      case 'vae': return t.fieldAnimaVae;
+      case 't5TokenizerPath': return t.fieldAnimaT5TokenizerPath;
+      case 'llmAdapterPath': return t.fieldAnimaLlmAdapterPath;
+      default: return String(field);
+    }
+  };
 
   const updateDatasetSubset = (
     subsetId: string,
@@ -219,6 +290,26 @@ export default function NewJob() {
       }
     };
     el.click();
+  };
+
+  const browseOverrideFile = (field: keyof TrainParams) => {
+    const el = document.createElement('input');
+    el.type = 'file';
+    el.accept = '.safetensors,.ckpt,.pt,.bin';
+    el.onchange = () => {
+      const f = el.files?.[0];
+      if (f) {
+        const fullPath = (f as File & { path?: string }).path ?? f.name;
+        setOverrideValue(field, fullPath);
+      }
+    };
+    el.click();
+  };
+
+  const browseOverrideFolder = (field: keyof TrainParams) => {
+    openFolderPicker(fullPath => {
+      setOverrideValue(field, fullPath);
+    });
   };
 
   const browseSubsetFolder = (subsetId: string) => {
@@ -403,6 +494,98 @@ export default function NewJob() {
               <label style={S.label}>{t.fieldOutputName}</label>
               <input style={S.input} placeholder={t.fieldOutputNamePlaceholder} {...inp('outputName')} />
             </div>
+            {input.modelType === 'flux' && (
+              <>
+                <div style={S.row}>
+                  <label style={S.label}>{t.fieldFluxClipL}</label>
+                  <div style={S.inputRow}>
+                    <input
+                      style={S.input}
+                      placeholder={t.fieldFluxClipL}
+                      value={getOverrideValue('clipL')}
+                      onChange={e => setOverrideValue('clipL', e.target.value)}
+                    />
+                    <button type="button" style={S.browseBtn} onClick={() => browseOverrideFile('clipL')}>{t.browseFile}</button>
+                  </div>
+                </div>
+                <div style={S.row}>
+                  <label style={S.label}>{t.fieldFluxT5xxl}</label>
+                  <div style={S.inputRow}>
+                    <input
+                      style={S.input}
+                      placeholder={t.fieldFluxT5xxl}
+                      value={getOverrideValue('t5xxl')}
+                      onChange={e => setOverrideValue('t5xxl', e.target.value)}
+                    />
+                    <button type="button" style={S.browseBtn} onClick={() => browseOverrideFile('t5xxl')}>{t.browseFile}</button>
+                  </div>
+                </div>
+                <div style={S.row}>
+                  <label style={S.label}>{t.fieldFluxAe}</label>
+                  <div style={S.inputRow}>
+                    <input
+                      style={S.input}
+                      placeholder={t.fieldFluxAe}
+                      value={getOverrideValue('ae')}
+                      onChange={e => setOverrideValue('ae', e.target.value)}
+                    />
+                    <button type="button" style={S.browseBtn} onClick={() => browseOverrideFile('ae')}>{t.browseFile}</button>
+                  </div>
+                </div>
+              </>
+            )}
+            {input.modelType === 'anima' && (
+              <>
+                <div style={S.row}>
+                  <label style={S.label}>{t.fieldAnimaQwen3}</label>
+                  <div style={S.inputRow}>
+                    <input
+                      style={S.input}
+                      placeholder={t.fieldAnimaQwen3}
+                      value={getOverrideValue('qwen3')}
+                      onChange={e => setOverrideValue('qwen3', e.target.value)}
+                    />
+                    <button type="button" style={S.browseBtn} onClick={() => browseOverrideFile('qwen3')}>{t.browseFile}</button>
+                  </div>
+                </div>
+                <div style={S.row}>
+                  <label style={S.label}>{t.fieldAnimaVae}</label>
+                  <div style={S.inputRow}>
+                    <input
+                      style={S.input}
+                      placeholder={t.fieldAnimaVae}
+                      value={getOverrideValue('vae')}
+                      onChange={e => setOverrideValue('vae', e.target.value)}
+                    />
+                    <button type="button" style={S.browseBtn} onClick={() => browseOverrideFile('vae')}>{t.browseFile}</button>
+                  </div>
+                </div>
+                <div style={S.row}>
+                  <label style={S.label}>{t.fieldAnimaT5TokenizerPath}</label>
+                  <div style={S.inputRow}>
+                    <input
+                      style={S.input}
+                      placeholder={t.fieldAnimaT5TokenizerPath}
+                      value={getOverrideValue('t5TokenizerPath')}
+                      onChange={e => setOverrideValue('t5TokenizerPath', e.target.value)}
+                    />
+                    <button type="button" style={S.browseBtn} onClick={() => browseOverrideFolder('t5TokenizerPath')}>{t.browseFolder}</button>
+                  </div>
+                </div>
+                <div style={S.row}>
+                  <label style={S.label}>{t.fieldAnimaLlmAdapterPath}</label>
+                  <div style={S.inputRow}>
+                    <input
+                      style={S.input}
+                      placeholder={t.fieldAnimaLlmAdapterPath}
+                      value={getOverrideValue('llmAdapterPath')}
+                      onChange={e => setOverrideValue('llmAdapterPath', e.target.value)}
+                    />
+                    <button type="button" style={S.browseBtn} onClick={() => browseOverrideFile('llmAdapterPath')}>{t.browseFile}</button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -440,11 +623,18 @@ export default function NewJob() {
                 <option value="git">{t.captionGit}</option>
               </select>
             </div>
-            <label style={S.checkRow}>
-              <input type="checkbox" checked={!!preproc.runPrepareBuckets}
-                onChange={e => setPreproc(p => ({ ...p, runPrepareBuckets: e.target.checked }))} />
+            <label style={{ ...S.checkRow, ...(prepareBucketsSupported ? null : { opacity: 0.5 }) }}>
+              <input
+                type="checkbox"
+                checked={prepareBucketsSupported && !!preproc.runPrepareBuckets}
+                disabled={!prepareBucketsSupported}
+                onChange={e => setPreproc(p => ({ ...p, runPrepareBuckets: e.target.checked }))}
+              />
               {t.prepareBuckets}
             </label>
+            {!prepareBucketsSupported && (
+              <div style={S.hint}>{t.prepareBucketsUnsupported(input.modelType.toUpperCase())}</div>
+            )}
           </div>
         </details>
 

@@ -32,6 +32,8 @@ _DEFAULT_RESOLUTION = {
     "anima": 1024,
 }
 
+_UTF8_ENV = {"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+
 
 def _subset_work_key(index: int, image_dir: str) -> str:
     base_name = Path(image_dir).name or f"subset_{index + 1}"
@@ -169,7 +171,7 @@ def main() -> None:
         encoding="utf-8",
         errors="replace",
         cwd=sd_dir,
-        env={**os.environ},
+        env={**os.environ, **_UTF8_ENV},
     )
 
     assert proc.stdout

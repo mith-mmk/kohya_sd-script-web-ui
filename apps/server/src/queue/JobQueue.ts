@@ -3,7 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { v4 as uuidv4 } from 'uuid';
-import type { TrainJob, TrainJobInput, PreprocessOptions, TrainParams, LogEvent, RetryConfig } from '../types/job.js';
+import type { ModelType, TrainJob, TrainJobInput, PreprocessOptions, TrainParams, LogEvent, RetryConfig } from '../types/job.js';
 import { conservativeOverride, defaultPreprocessOptions } from '../types/job.js';
 import {
   dbInsertJob, dbUpdateJob, dbGetJob, dbListJobs, dbInsertLog, dbGetProfile,
@@ -12,8 +12,26 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BRIDGE_DIR = path.resolve(process.env['BRIDGE_DIR'] ?? path.join(__dirname, '../../../../python/bridge'));
 const SD_SCRIPTS_DIR = path.resolve(process.env['SD_SCRIPTS_DIR'] ?? path.join(__dirname, '../../../../sd-scripts'));
-const WORK_BASE = path.resolve(process.env['WORK_BASE'] ?? path.join(__dirname, '../../../../data/jobs'));
+const WORK_BASE = path.resolve(process.env['WORK_BASE'] ?? path.join(__dirname, '../../../../work'));
 const PYTHON_BIN = process.env['PYTHON_BIN'] ?? 'python';
+const UTF8_PYTHON_ENV = { PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' } as const;
+const PREPARE_BUCKETS_UNSUPPORTED = new Set<ModelType>(['flux', 'anima']);
+const MODEL_REQUIRED_PATH_FIELDS: Partial<Record<ModelType, Array<keyof TrainParams>>> = {
+  flux: ['clipL', 't5xxl', 'ae'],
+  anima: ['qwen3', 'vae'],
+};
+const MODEL_OPTIONAL_PATH_FIELDS: Partial<Record<ModelType, Array<keyof TrainParams>>> = {
+  anima: ['t5TokenizerPath', 'llmAdapterPath'],
+};
+const MODEL_PATH_LABELS: Partial<Record<keyof TrainParams, string>> = {
+  clipL: 'FLUX CLIP-L path',
+  t5xxl: 'FLUX T5XXL path',
+  ae: 'FLUX AE path',
+  qwen3: 'Anima Qwen3 path',
+  vae: 'Anima VAE path',
+  t5TokenizerPath: 'Anima T5 tokenizer path',
+  llmAdapterPath: 'Anima LLM adapter path',
+};
 
 type LogListener = (event: LogEvent) => void;
 
@@ -43,10 +61,10 @@ class JobQueue {
     preprocessOptions?: Partial<PreprocessOptions>,
   ): TrainJob {
     const normalizedInput = normalizeTrainJobInput(input);
+    const resolvedPreprocessOptions = resolvePreprocessOptions(normalizedInput.modelType, preprocessOptions);
+    const resolvedSdScriptsDir = resolveSdScriptsDir(normalizedInput);
     const id = uuidv4();
     const now = new Date().toISOString();
-    const workDir = path.join(WORK_BASE, id);
-    fs.mkdirSync(workDir, { recursive: true });
 
     // Resolve parameters from profile + overrides
     const profile = normalizedInput.profileId ? dbGetProfile(normalizedInput.profileId) : null;
@@ -62,10 +80,16 @@ class JobQueue {
       }
     }
 
+    validateInputForLaunch(normalizedInput, resolvedPreprocessOptions, resolved, resolvedSdScriptsDir);
+
+    fs.mkdirSync(normalizedInput.outputDir, { recursive: true });
+    const workDir = path.join(WORK_BASE, id);
+    fs.mkdirSync(workDir, { recursive: true });
+
     const job: TrainJob = {
       id, name: input.name, status: 'queued', currentPhase: 'preprocess',
       modelType: normalizedInput.modelType, workDir, input: normalizedInput,
-      preprocessOptions: { ...defaultPreprocessOptions, ...preprocessOptions },
+      preprocessOptions: resolvedPreprocessOptions,
       params: resolved,
       retryCount: 0, createdAt: now, updatedAt: now,
     };
@@ -80,10 +104,9 @@ class JobQueue {
     if (this.processes.has(jobId)) throw new Error(`Job ${jobId} already running`);
 
     const normalizedInput = normalizeTrainJobInput(job.input);
-
-    const resolvedSdScriptsDir = normalizedInput.sdScriptsDir?.trim()
-      ? path.resolve(normalizedInput.sdScriptsDir)
-      : SD_SCRIPTS_DIR;
+    const resolvedSdScriptsDir = resolveSdScriptsDir(normalizedInput);
+    validateInputForLaunch(normalizedInput, job.preprocessOptions, job.params, resolvedSdScriptsDir);
+    fs.mkdirSync(normalizedInput.outputDir, { recursive: true });
 
     const now = new Date().toISOString();
     dbUpdateJob(jobId, { status: 'running', startedAt: now });
@@ -115,7 +138,7 @@ class JobQueue {
       '--config', configPath,
     ], {
       cwd: job.workDir,
-      env: { ...process.env },
+      env: { ...process.env, ...UTF8_PYTHON_ENV },
     });
 
     this.processes.set(jobId, proc);
@@ -253,6 +276,11 @@ class JobQueue {
 export const jobQueue = new JobQueue();
 
 function normalizeTrainJobInput(input: TrainJobInput): TrainJobInput {
+  const overrides = input.overrides
+    ? Object.fromEntries(
+      Object.entries(input.overrides).map(([key, value]) => [key, typeof value === 'string' ? value.trim() : value]),
+    ) as Partial<TrainParams>
+    : undefined;
   const datasetSubsets = (input.datasetSubsets ?? [])
     .map(subset => {
       const imageDir = subset.imageDir.trim();
@@ -275,12 +303,102 @@ function normalizeTrainJobInput(input: TrainJobInput): TrainJobInput {
   const primarySubset = datasetSubsets[0];
   return {
     ...input,
+    name: input.name.trim(),
+    baseModelPath: input.baseModelPath.trim(),
     datasetDir: primarySubset?.imageDir ?? fallbackDatasetDir,
     datasetSubsets,
+    outputDir: input.outputDir.trim(),
+    outputName: input.outputName.trim(),
+    profileId: input.profileId?.trim() || undefined,
     sdScriptsDir: input.sdScriptsDir?.trim() || undefined,
     triggerWord: primarySubset?.triggerWord ?? (input.triggerWord?.trim() || undefined),
     repeatCount: primarySubset?.repeatCount ?? Math.max(1, Number(input.repeatCount) || 10),
+    overrides,
   };
+}
+
+function resolveSdScriptsDir(input: TrainJobInput): string {
+  return input.sdScriptsDir?.trim()
+    ? path.resolve(input.sdScriptsDir)
+    : SD_SCRIPTS_DIR;
+}
+
+function resolvePreprocessOptions(
+  modelType: ModelType,
+  preprocessOptions?: Partial<PreprocessOptions>,
+): PreprocessOptions {
+  const resolved = { ...defaultPreprocessOptions, ...preprocessOptions };
+  validatePreprocessOptions(modelType, resolved);
+  return resolved;
+}
+
+function validateInputForLaunch(
+  input: TrainJobInput,
+  preprocessOptions: PreprocessOptions,
+  params: TrainParams,
+  resolvedSdScriptsDir: string,
+): void {
+  const datasetSubsets = input.datasetSubsets ?? [];
+
+  if (!input.name) throw new Error('Job name is required');
+  if (!input.baseModelPath) throw new Error('Base model path is required');
+  if (!input.outputDir) throw new Error('Output directory is required');
+  if (!input.outputName) throw new Error('Output name is required');
+  if (!datasetSubsets.length) throw new Error('At least one dataset subset is required');
+
+  validatePreprocessOptions(input.modelType, preprocessOptions);
+  validateExistingDirectory('sd-scripts directory', resolvedSdScriptsDir);
+
+  for (const subset of datasetSubsets) {
+    validateExistingDirectory('Dataset subset directory', subset.imageDir);
+  }
+
+  validateModelPaths(input.modelType, params);
+}
+
+function validatePreprocessOptions(modelType: ModelType, preprocessOptions: PreprocessOptions): void {
+  if (preprocessOptions.runPrepareBuckets && PREPARE_BUCKETS_UNSUPPORTED.has(modelType)) {
+    throw new Error(`Prepare buckets is not supported for ${modelType} jobs`);
+  }
+}
+
+function validateModelPaths(modelType: ModelType, params: TrainParams): void {
+  const requiredFields = MODEL_REQUIRED_PATH_FIELDS[modelType] ?? [];
+  const optionalFields = MODEL_OPTIONAL_PATH_FIELDS[modelType] ?? [];
+
+  for (const field of requiredFields) {
+    const value = getStringParam(params, field);
+    if (!value) {
+      throw new Error(`${MODEL_PATH_LABELS[field] ?? String(field)} is required for ${modelType} jobs`);
+    }
+    validateExistingPath(MODEL_PATH_LABELS[field] ?? String(field), value);
+  }
+
+  for (const field of optionalFields) {
+    const value = getStringParam(params, field);
+    if (value) {
+      validateExistingPath(MODEL_PATH_LABELS[field] ?? String(field), value);
+    }
+  }
+}
+
+function getStringParam(params: TrainParams, field: keyof TrainParams): string | undefined {
+  const value = params[field];
+  if (typeof value !== 'string') return undefined;
+  return value.trim() || undefined;
+}
+
+function validateExistingDirectory(label: string, targetPath: string): void {
+  validateExistingPath(label, targetPath);
+  if (!fs.statSync(targetPath).isDirectory()) {
+    throw new Error(`${label} is not a directory: ${targetPath}`);
+  }
+}
+
+function validateExistingPath(label: string, targetPath: string): void {
+  if (!fs.existsSync(targetPath)) {
+    throw new Error(`${label} not found: ${targetPath}`);
+  }
 }
 
 // ─── Parameter defaults by model ─────────────────────────────────────────────

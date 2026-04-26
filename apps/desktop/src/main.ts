@@ -1,5 +1,6 @@
 import { app, BrowserWindow, shell } from 'electron';
 import { spawn, ChildProcess } from 'child_process';
+import fs from 'fs';
 import path from 'path';
 import http from 'http';
 
@@ -11,31 +12,125 @@ const IS_DEV =
   process.env['NODE_ENV'] === 'development' ||
   !app.isPackaged;
 
+if (IS_DEV) {
+  loadEnvFile(path.resolve(__dirname, '../../../.env'));
+}
+
 let mainWindow: BrowserWindow | null = null;
 let serverProcess: ChildProcess | null = null;
+
+type RuntimePaths = {
+  serverEntry: string;
+  sdScriptsDir: string;
+  bridgeDir: string;
+  pythonBin: string;
+  dbPath: string;
+  workBase: string;
+};
+
+function loadEnvFile(envPath: string): void {
+  if (!fs.existsSync(envPath)) return;
+
+  const envText = fs.readFileSync(envPath, 'utf-8');
+  for (const rawLine of envText.split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+
+    const separatorIndex = line.indexOf('=');
+    if (separatorIndex <= 0) continue;
+
+    const key = line.slice(0, separatorIndex).trim();
+    if (!key || process.env[key] !== undefined) continue;
+
+    let value = line.slice(separatorIndex + 1);
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+
+    process.env[key] = value;
+  }
+}
+
+function getBundledPythonPath(baseDir: string): string {
+  return process.platform === 'win32'
+    ? path.join(baseDir, '.venv', 'Scripts', 'python.exe')
+    : path.join(baseDir, '.venv', 'bin', 'python');
+}
+
+function resolveRuntimePaths(): RuntimePaths {
+  const repoRoot = path.resolve(__dirname, '../../..');
+  const userDataDir = app.getPath('userData');
+
+  const serverEntry = process.env['SERVER_ENTRY'] ?? (
+    IS_DEV
+      ? path.join(__dirname, '../../server/dist/index.js')
+      : path.join(process.resourcesPath, 'server/dist/index.js')
+  );
+
+  const sdScriptsDir = process.env['SD_SCRIPTS_DIR'] ?? (
+    IS_DEV
+      ? path.join(repoRoot, 'sd-scripts')
+      : path.join(process.resourcesPath, 'sd-scripts')
+  );
+
+  const bridgeDir = process.env['BRIDGE_DIR'] ?? (
+    IS_DEV
+      ? path.join(repoRoot, 'python/bridge')
+      : path.join(process.resourcesPath, 'python/bridge')
+  );
+
+  const pythonBin = process.env['PYTHON_BIN'] ?? (
+    IS_DEV
+      ? getBundledPythonPath(repoRoot)
+      : getBundledPythonPath(process.resourcesPath)
+  );
+
+  const dbPath = process.env['DB_PATH'] ?? (
+    IS_DEV
+      ? path.join(repoRoot, 'data', 'kohya.db')
+      : path.join(userDataDir, 'data', 'kohya.db')
+  );
+
+  const workBase = process.env['WORK_BASE'] ?? (
+    IS_DEV
+      ? path.join(repoRoot, 'work')
+      : path.join(userDataDir, 'work')
+  );
+
+  return { serverEntry, sdScriptsDir, bridgeDir, pythonBin, dbPath, workBase };
+}
+
+function assertRuntimePaths(runtimePaths: RuntimePaths): void {
+  const missing: string[] = [];
+
+  if (!fs.existsSync(runtimePaths.serverEntry)) missing.push(`server entry: ${runtimePaths.serverEntry}`);
+  if (!fs.existsSync(runtimePaths.sdScriptsDir)) missing.push(`sd-scripts dir: ${runtimePaths.sdScriptsDir}`);
+  if (!fs.existsSync(runtimePaths.bridgeDir)) missing.push(`bridge dir: ${runtimePaths.bridgeDir}`);
+  if (!fs.existsSync(runtimePaths.pythonBin)) missing.push(`python runtime: ${runtimePaths.pythonBin}`);
+
+  if (missing.length) {
+    throw new Error(`Missing runtime resources: ${missing.join(', ')}`);
+  }
+}
 
 // ── Start the Node.js API server ─────────────────────────────────────────────
 function startServer(): Promise<void> {
   return new Promise((resolve, reject) => {
-    const serverEntry = IS_DEV
-      ? path.join(__dirname, '../../server/dist/index.js')
-      : path.join(process.resourcesPath, 'server/dist/index.js');
+    const runtimePaths = resolveRuntimePaths();
+    assertRuntimePaths(runtimePaths);
+    fs.mkdirSync(path.dirname(runtimePaths.dbPath), { recursive: true });
+    fs.mkdirSync(runtimePaths.workBase, { recursive: true });
 
-    const sdScriptsDir = IS_DEV
-      ? path.join(__dirname, '../../../sd-scripts')
-      : path.join(process.resourcesPath, 'sd-scripts');
-
-    const bridgeDir = IS_DEV
-      ? path.join(__dirname, '../../../python/bridge')
-      : path.join(process.resourcesPath, 'python/bridge');
-
-    serverProcess = spawn(process.execPath, [serverEntry], {
+    serverProcess = spawn(process.execPath, [runtimePaths.serverEntry], {
       env: {
         ...process.env,
         NODE_ENV: IS_DEV ? 'development' : 'production',
         PORT: String(SERVER_PORT),
-        SD_SCRIPTS_DIR: sdScriptsDir,
-        BRIDGE_DIR: bridgeDir,
+        DB_PATH: runtimePaths.dbPath,
+        WORK_BASE: runtimePaths.workBase,
+        PYTHON_BIN: runtimePaths.pythonBin,
+        SD_SCRIPTS_DIR: runtimePaths.sdScriptsDir,
+        BRIDGE_DIR: runtimePaths.bridgeDir,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });

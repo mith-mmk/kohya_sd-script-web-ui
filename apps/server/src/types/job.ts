@@ -37,6 +37,11 @@ export interface TrainParams {
   clipL?: string;
   t5xxl?: string;
   ae?: string;
+  // Anima-specific
+  qwen3?: string;
+  vae?: string;
+  t5TokenizerPath?: string;
+  llmAdapterPath?: string;
 }
 
 // ─── Fixed parameter profile ──────────────────────────────────────────────────

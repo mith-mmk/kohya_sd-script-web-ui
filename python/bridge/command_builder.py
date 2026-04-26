@@ -17,6 +17,13 @@ SCRIPT_MAP = {
     "anima": "anima_train_network.py",
 }
 
+NETWORK_MODULE_MAP = {
+    "sd1x": "networks.lora",
+    "sdxl": "networks.lora",
+    "flux": "networks.lora_flux",
+    "anima": "networks.lora_anima",
+}
+
 
 def build_train_command(config: dict[str, Any], sd_scripts_dir: str) -> list[str]:
     """
@@ -29,6 +36,10 @@ def build_train_command(config: dict[str, Any], sd_scripts_dir: str) -> list[str
     script_name = SCRIPT_MAP.get(model_type)
     if script_name is None:
         raise ValueError(f"Unsupported modelType: {model_type!r}")
+
+    network_module = NETWORK_MODULE_MAP.get(model_type)
+    if network_module is None:
+        raise ValueError(f"Unsupported network module for modelType: {model_type!r}")
 
     script_path = os.path.join(sd_scripts_dir, script_name)
     if not os.path.exists(script_path):
@@ -62,7 +73,7 @@ def build_train_command(config: dict[str, Any], sd_scripts_dir: str) -> list[str
         _req(cmd, "--train_data_dir", config["datasetDir"])
 
     # ── LoRA network ─────────────────────────────────────────────────────────
-    cmd += ["--network_module", "networks.lora"]
+    cmd += ["--network_module", network_module]
     _opt(cmd, "--network_dim", params.get("networkDim"))
     _opt(cmd, "--network_alpha", params.get("networkAlpha"))
 
@@ -126,6 +137,12 @@ def build_train_command(config: dict[str, Any], sd_scripts_dir: str) -> list[str
         _opt(cmd, "--t5xxl_max_token_length", params.get("t5xxlMaxTokenLength", 512))
         _opt(cmd, "--timestep_sampling", params.get("timestepSampling", "flux_shift"))
         cmd.append("--apply_t5_attn_mask")
+
+    if model_type == "anima":
+        _req(cmd, "--qwen3", params.get("qwen3"))
+        _req(cmd, "--vae", params.get("vae"))
+        _opt(cmd, "--t5_tokenizer_path", params.get("t5TokenizerPath"))
+        _opt(cmd, "--llm_adapter_path", params.get("llmAdapterPath"))
 
     return cmd
 

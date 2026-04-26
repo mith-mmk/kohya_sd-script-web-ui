@@ -23,8 +23,9 @@
     "files": ["dist/**/*"],
     "extraResources": [
       { "from": "../server/dist", "to": "server/dist" },
-      { "from": "../../../python", "to": "python" },
-      { "from": "../../../sd-scripts", "to": "sd-scripts" }
+      { "from": "../../python", "to": "python" },
+      { "from": "../../sd-scripts", "to": "sd-scripts" },
+      { "from": "../../.venv", "to": ".venv" }
     ],
     "win": { "target": "nsis" },
     "mac": { "target": "dmg" },
