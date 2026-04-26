@@ -111,8 +111,20 @@ const en: Translations = {
   // ── TagEditor ─────────────────────────────────────
   tagEditorDatasetDir: 'Dataset folder:',
   tagEditorNotSet: '(not set)',
-  tagEditorDesc: 'Tag editing (fine-tune step 3) reads/writes .txt sidecar files from the dataset folder.',
-  tagEditorHint: 'After editing tags, re-run preprocessing with WD14 disabled, then resume training.',
+  tagEditorDesc: 'This editor updates the managed prompt files only; it does not modify the original dataset .txt files directly.',
+  tagEditorHint: 'Keep trigger words out of this prompt. Training applies them separately when .train.txt files are generated.',
+  tagEditorManagedDir: 'Managed folder:',
+  tagEditorSubsetLabel: 'Subset',
+  tagEditorPromptFiles: 'Prompt files',
+  tagEditorUnavailable: 'The managed dataset is not ready yet. Run preprocessing once first.',
+  tagEditorEmpty: 'No editable prompts were found yet. Start from existing .txt files or generate captions/tags in preprocessing.',
+  tagEditorSelectFile: 'Select a file on the left to edit its prompt.',
+  tagEditorSave: 'Save',
+  tagEditorSaving: 'Saving…',
+  tagEditorSaved: 'Saved.',
+  tagEditorDirty: 'You have unsaved changes.',
+  tagEditorRunning: 'Prompt editing is disabled while the job is running.',
+  tagEditorLoadFailed: 'Failed to load prompt files.',
 
   // ── Language ──────────────────────────────────────
   langLabel: 'Language',

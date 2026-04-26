@@ -153,7 +153,7 @@ export default function JobDetail() {
 
       {tab === 'console' && <Console events={logs} />}
       {tab === 'params' && <ParamsView params={job.params} />}
-      {tab === 'tags' && <TagEditor datasetDirs={datasetDirs} />}
+      {tab === 'tags' && <TagEditor jobId={job.id} jobStatus={job.status} />}
     </div>
   );
 }

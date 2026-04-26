@@ -106,6 +106,18 @@ export interface Translations {
   tagEditorNotSet: string;
   tagEditorDesc: string;
   tagEditorHint: string;
+  tagEditorManagedDir: string;
+  tagEditorSubsetLabel: string;
+  tagEditorPromptFiles: string;
+  tagEditorUnavailable: string;
+  tagEditorEmpty: string;
+  tagEditorSelectFile: string;
+  tagEditorSave: string;
+  tagEditorSaving: string;
+  tagEditorSaved: string;
+  tagEditorDirty: string;
+  tagEditorRunning: string;
+  tagEditorLoadFailed: string;
   // ── Language ──────────────────────────────────────
   langLabel: string;
 }
@@ -210,8 +222,20 @@ const ja: Translations = {
   autoScrollOff: '▶ 自動スクロール',
   tagEditorDatasetDir: 'データセットフォルダ:',
   tagEditorNotSet: '(未設定)',
-  tagEditorDesc: 'タグ編集（ファインチューン step 3）は .txt サイドカーファイルを読み書きします。',
-  tagEditorHint: 'タグ編集後は WD14 を無効にして前処理を再実行し、学習を再開してください。',
+  tagEditorDesc: 'ここで編集するのは managed prompt です。元の dataset の .txt は直接書き換えません。',
+  tagEditorHint: 'トリガーワードはこの prompt には含めず、学習時に .train.txt へ自動適用します。',
+  tagEditorManagedDir: '管理済みフォルダ:',
+  tagEditorSubsetLabel: 'サブセット',
+  tagEditorPromptFiles: 'プロンプトファイル',
+  tagEditorUnavailable: 'まだ managed dataset が作成されていません。前処理を 1 回実行してください。',
+  tagEditorEmpty: '編集できる prompt がまだありません。既存 .txt を持つか、前処理で caption/tag を作成してください。',
+  tagEditorSelectFile: '左のファイルを選ぶと prompt を表示します。',
+  tagEditorSave: '保存',
+  tagEditorSaving: '保存中…',
+  tagEditorSaved: '保存しました。',
+  tagEditorDirty: '未保存の変更があります。',
+  tagEditorRunning: '実行中は prompt を編集できません。',
+  tagEditorLoadFailed: 'prompt の読み込みに失敗しました。',
   langLabel: '言語',
 };
 

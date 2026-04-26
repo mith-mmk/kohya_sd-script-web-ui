@@ -84,6 +84,29 @@ export interface TrainJob {
   completedAt?: string;
 }
 
+export interface PromptFileEntry {
+  id: string;
+  relativePath: string;
+  baseName: string;
+  updatedAt: string;
+  size: number;
+}
+
+export interface PromptSubsetEntry {
+  workKey: string;
+  label: string;
+  imageDir: string;
+  effectiveDir: string;
+  available: boolean;
+  items: PromptFileEntry[];
+}
+
+export interface PromptListResponse {
+  promptExtension: string;
+  trainingExtension: string;
+  subsets: PromptSubsetEntry[];
+}
+
 export interface LogEvent {
   jobId: string;
   ts: number;

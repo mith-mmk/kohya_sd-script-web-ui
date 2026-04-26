@@ -1,7 +1,134 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { jobQueue } from '../queue/JobQueue.js';
-import type { TrainJobInput, PreprocessOptions } from '../types/job.js';
+import type { TrainJob, TrainJobInput, PreprocessOptions } from '../types/job.js';
 import { dbGetLogs, dbListProfiles } from '../db/client.js';
+
+const MANAGED_PROMPT_EXTENSION = '.prompt.txt';
+const TRAINING_PROMPT_EXTENSION = '.train.txt';
+
+interface PromptSubsetRef {
+  workKey: string;
+  label: string;
+  imageDir: string;
+}
+
+interface PromptFileEntry {
+  id: string;
+  relativePath: string;
+  baseName: string;
+  updatedAt: string;
+  size: number;
+}
+
+interface PromptSubsetEntry {
+  workKey: string;
+  label: string;
+  imageDir: string;
+  effectiveDir: string;
+  available: boolean;
+  items: PromptFileEntry[];
+}
+
+interface PromptListResponse {
+  promptExtension: string;
+  trainingExtension: string;
+  subsets: PromptSubsetEntry[];
+}
+
+function subsetWorkKey(index: number, imageDir: string): string {
+  const baseName = path.basename(imageDir) || `subset_${index + 1}`;
+  const safeName = Array.from(baseName)
+    .map(char => (/^[a-z0-9]$/i.test(char) ? char : '_'))
+    .join('')
+    .replace(/^_+|_+$/g, '') || `subset_${index + 1}`;
+  return `${String(index + 1).padStart(2, '0')}_${safeName}`;
+}
+
+function resolvePromptSubsets(input: TrainJobInput): PromptSubsetRef[] {
+  const subsets = (input.datasetSubsets ?? [])
+    .map((subset, index) => {
+      const imageDir = String(subset.imageDir ?? '').trim();
+      if (!imageDir) return null;
+      return {
+        workKey: subsetWorkKey(index, imageDir),
+        label: `${index + 1}:${path.basename(imageDir) || `subset_${index + 1}`}`,
+        imageDir,
+      } satisfies PromptSubsetRef;
+    })
+    .filter((subset): subset is PromptSubsetRef => Boolean(subset));
+
+  if (subsets.length > 0) return subsets;
+
+  const datasetDir = String(input.datasetDir ?? '').trim();
+  if (!datasetDir) return [];
+  return [{
+    workKey: subsetWorkKey(0, datasetDir),
+    label: `1:${path.basename(datasetDir) || 'subset_1'}`,
+    imageDir: datasetDir,
+  }];
+}
+
+function resolveEffectiveSubsetDir(job: TrainJob, subset: PromptSubsetRef): string {
+  const rootDir = job.preprocessOptions.runResize && !job.preprocessOptions.skipPreprocessing
+    ? 'resized'
+    : 'prepared';
+  return path.join(job.workDir, rootDir, subset.workKey);
+}
+
+function isWithinDir(rootDir: string, candidatePath: string): boolean {
+  const relativePath = path.relative(rootDir, candidatePath);
+  return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
+}
+
+async function listPromptFiles(rootDir: string): Promise<PromptFileEntry[]> {
+  const items: PromptFileEntry[] = [];
+
+  async function walk(dirPath: string): Promise<void> {
+    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith(MANAGED_PROMPT_EXTENSION)) continue;
+
+      const stats = await fs.stat(fullPath);
+      const relativePath = path.relative(rootDir, fullPath).replaceAll('\\', '/');
+      items.push({
+        id: relativePath,
+        relativePath,
+        baseName: path.basename(relativePath, MANAGED_PROMPT_EXTENSION),
+        updatedAt: stats.mtime.toISOString(),
+        size: stats.size,
+      });
+    }
+  }
+
+  await walk(rootDir);
+  return items.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+}
+
+function getPromptSubset(job: TrainJob, workKey: string): PromptSubsetRef {
+  const subset = resolvePromptSubsets(job.input).find(entry => entry.workKey === workKey);
+  if (!subset) throw new Error(`Unknown dataset subset: ${workKey}`);
+  return subset;
+}
+
+function resolveManagedPromptPath(job: TrainJob, subset: PromptSubsetRef, relativePath: string): string {
+  const effectiveDir = resolveEffectiveSubsetDir(job, subset);
+  const normalizedRelativePath = path.normalize(relativePath).replace(/^([./\\])+/, '');
+  const promptPath = path.resolve(effectiveDir, normalizedRelativePath);
+  if (!promptPath.endsWith(MANAGED_PROMPT_EXTENSION)) {
+    throw new Error('Only managed prompt files can be edited');
+  }
+  if (!isWithinDir(effectiveDir, promptPath)) {
+    throw new Error('Prompt path is outside of the managed dataset directory');
+  }
+  return promptPath;
+}
 
 export async function jobRoutes(app: FastifyInstance): Promise<void> {
   // List all jobs
@@ -77,6 +204,70 @@ export async function jobRoutes(app: FastifyInstance): Promise<void> {
       return job;
     } catch (err) {
       reply.status(400).send({ error: String(err) });
+    }
+  });
+
+  app.get<{ Params: { id: string } }>('/api/jobs/:id/prompts', async (req, reply) => {
+    const job = jobQueue.get(req.params.id);
+    if (!job) return reply.status(404).send({ error: 'Not found' });
+
+    const subsets = await Promise.all(resolvePromptSubsets(job.input).map(async subset => {
+      const effectiveDir = resolveEffectiveSubsetDir(job, subset);
+      const available = await fs.stat(effectiveDir).then(() => true).catch(() => false);
+      const items = available ? await listPromptFiles(effectiveDir) : [];
+      return {
+        ...subset,
+        effectiveDir,
+        available,
+        items,
+      } satisfies PromptSubsetEntry;
+    }));
+
+    const response: PromptListResponse = {
+      promptExtension: MANAGED_PROMPT_EXTENSION,
+      trainingExtension: TRAINING_PROMPT_EXTENSION,
+      subsets,
+    };
+    return response;
+  });
+
+  app.get<{
+    Params: { id: string };
+    Querystring: { subset: string; path: string };
+  }>('/api/jobs/:id/prompts/content', async (req, reply) => {
+    const job = jobQueue.get(req.params.id);
+    if (!job) return reply.status(404).send({ error: 'Not found' });
+
+    try {
+      const subset = getPromptSubset(job, req.query.subset);
+      const promptPath = resolveManagedPromptPath(job, subset, req.query.path);
+      const stats = await fs.stat(promptPath);
+      const content = await fs.readFile(promptPath, 'utf-8');
+      return { content, updatedAt: stats.mtime.toISOString() };
+    } catch (error) {
+      return reply.status(400).send({ error: String(error) });
+    }
+  });
+
+  app.put<{
+    Params: { id: string };
+    Body: { subset: string; path: string; content: string };
+  }>('/api/jobs/:id/prompts/content', async (req, reply) => {
+    const job = jobQueue.get(req.params.id);
+    if (!job) return reply.status(404).send({ error: 'Not found' });
+    if (job.status === 'running') {
+      return reply.status(409).send({ error: 'Cannot edit prompts while the job is running' });
+    }
+
+    try {
+      const subset = getPromptSubset(job, req.body.subset);
+      const promptPath = resolveManagedPromptPath(job, subset, req.body.path);
+      await fs.mkdir(path.dirname(promptPath), { recursive: true });
+      await fs.writeFile(promptPath, req.body.content, 'utf-8');
+      const stats = await fs.stat(promptPath);
+      return { ok: true, updatedAt: stats.mtime.toISOString() };
+    } catch (error) {
+      return reply.status(400).send({ error: String(error) });
     }
   });
 

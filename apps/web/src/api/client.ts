@@ -1,4 +1,4 @@
-import type { TrainJob, TrainJobInput, PreprocessOptions, LoRAProfile, LogEvent } from '../types/job.js';
+import type { TrainJob, TrainJobInput, PreprocessOptions, LoRAProfile, LogEvent, PromptListResponse } from '../types/job.js';
 
 const BASE = '/api';
 
@@ -25,6 +25,14 @@ export const api = {
   stopJob: (id: string) => req<{ ok: boolean }>(`${BASE}/jobs/${id}/stop`, { method: 'POST' }),
   deleteJob: (id: string) => req<{ ok: boolean }>(`${BASE}/jobs/${id}`, { method: 'DELETE' }),
   resumeJob: (id: string) => req<{ ok: boolean }>(`${BASE}/jobs/${id}/resume`, { method: 'POST' }),
+  listJobPrompts: (id: string) => req<PromptListResponse>(`${BASE}/jobs/${id}/prompts`),
+  getJobPromptContent: (id: string, subset: string, relativePath: string) =>
+    req<{ content: string; updatedAt: string }>(`${BASE}/jobs/${id}/prompts/content?subset=${encodeURIComponent(subset)}&path=${encodeURIComponent(relativePath)}`),
+  saveJobPromptContent: (id: string, subset: string, relativePath: string, content: string) =>
+    req<{ ok: boolean; updatedAt: string }>(`${BASE}/jobs/${id}/prompts/content`, {
+      method: 'PUT',
+      body: JSON.stringify({ subset, path: relativePath, content }),
+    }),
   getLogs: (id: string, since?: number) =>
     req<LogEvent[]>(`${BASE}/jobs/${id}/logs${since ? `?since=${since}` : ''}`),
   listProfiles: () => req<LoRAProfile[]>(`${BASE}/profiles`),

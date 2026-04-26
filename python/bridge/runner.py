@@ -34,6 +34,9 @@ _DEFAULT_RESOLUTION = {
 
 _UTF8_ENV = {"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
 _FATAL_TRAINING_MARKERS = ("No data found.", "画像がありません")
+_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".avif"}
+_EDITABLE_PROMPT_EXTENSION = ".prompt.txt"
+_TRAINING_PROMPT_EXTENSION = ".train.txt"
 _RELATIVE_DATASET_PATH_ERROR = (
     "Dataset subset directory must be an absolute path: {path}. "
     "The browser folder picker may have returned only the folder name. "
@@ -89,11 +92,74 @@ def _resolve_dataset_subsets(config: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _get_effective_subset_dir(config: dict[str, Any], subset: dict[str, Any]) -> str:
     preprocess_opts = config.get("preprocessOptions", {}) or {}
-    if preprocess_opts.get("runResize", False) and not preprocess_opts.get(
-        "skipPreprocessing", False
-    ):
-        return os.path.join(config["workDir"], "resized", subset["workKey"])
-    return subset["imageDir"]
+    managed_dir = os.path.join(
+        config["workDir"],
+        (
+            "resized"
+            if preprocess_opts.get("runResize", False)
+            and not preprocess_opts.get("skipPreprocessing", False)
+            else "prepared"
+        ),
+        subset["workKey"],
+    )
+    return managed_dir if os.path.isdir(managed_dir) else subset["imageDir"]
+
+
+def _iter_image_files(root_dir: str) -> list[Path]:
+    root = Path(root_dir)
+    if not root.exists():
+        return []
+    return sorted(
+        path
+        for path in root.rglob("*")
+        if path.is_file() and path.suffix.lower() in _IMAGE_EXTENSIONS
+    )
+
+
+def _read_prompt_text(prompt_path: Path) -> str:
+    if not prompt_path.is_file():
+        return ""
+    return prompt_path.read_text(encoding="utf-8", errors="replace").strip()
+
+
+def _strip_trigger_word(prompt_text: str, trigger_word: str) -> str:
+    if not prompt_text or not trigger_word:
+        return prompt_text.strip()
+
+    trigger_norm = trigger_word.strip().casefold()
+    tokens = [token.strip() for token in prompt_text.split(",")]
+    filtered_tokens = [
+        token for token in tokens if token and token.casefold() != trigger_norm
+    ]
+    return ", ".join(filtered_tokens)
+
+
+def _build_training_prompt(prompt_text: str, trigger_word: str) -> str:
+    prompt_body = _strip_trigger_word(prompt_text, trigger_word)
+    parts = []
+    if trigger_word.strip():
+        parts.append(trigger_word.strip())
+    if prompt_body:
+        parts.append(prompt_body)
+    return ", ".join(parts)
+
+
+def _materialize_training_captions(
+    config: dict[str, Any], subset: dict[str, Any]
+) -> int:
+    effective_dir = _get_effective_subset_dir(config, subset)
+    created_count = 0
+    for image_path in _iter_image_files(effective_dir):
+        prompt_path = image_path.with_suffix(_EDITABLE_PROMPT_EXTENSION)
+        training_path = image_path.with_suffix(_TRAINING_PROMPT_EXTENSION)
+        training_prompt = _build_training_prompt(
+            _read_prompt_text(prompt_path), subset.get("triggerWord", "")
+        )
+        training_path.write_text(
+            f"{training_prompt}\n" if training_prompt else "", encoding="utf-8"
+        )
+        created_count += 1
+    return created_count
 
 
 def generate_dataset_toml(config: dict[str, Any]) -> str:
@@ -103,8 +169,6 @@ def generate_dataset_toml(config: dict[str, Any]) -> str:
 
     work_dir = config["workDir"]
     model_type = config.get("modelType", "sdxl")
-    preprocess_opts = config.get("preprocessOptions", {}) or {}
-    caption_extension = preprocess_opts.get("captionExtension", ".txt")
     resolution = _DEFAULT_RESOLUTION.get(model_type, 1024)
     toml_path = os.path.join(work_dir, "dataset.toml")
 
@@ -114,15 +178,17 @@ def generate_dataset_toml(config: dict[str, Any]) -> str:
         "batch_size = 1",
     ]
     for subset in dataset_subsets:
+        materialized_count = _materialize_training_captions(config, subset)
+        info(
+            f"[phase:train] Materialized training captions: {subset['workKey']} ({materialized_count} files)"
+        )
         lines += [
             "",
             "  [[datasets.subsets]]",
             f"  image_dir = {json.dumps(_get_effective_subset_dir(config, subset))}",
-            f"  caption_extension = {json.dumps(caption_extension)}",
+            f"  caption_extension = {json.dumps(_TRAINING_PROMPT_EXTENSION)}",
             f"  num_repeats = {subset['repeatCount']}",
         ]
-        if subset["triggerWord"]:
-            lines.append(f"  class_tokens = {json.dumps(subset['triggerWord'])}")
 
     with open(toml_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")

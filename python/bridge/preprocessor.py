@@ -7,6 +7,7 @@ Each step emits JSON-line events via event_emitter.
 from __future__ import annotations
 import json
 import os
+import shutil
 import sys
 import subprocess
 from pathlib import Path
@@ -17,6 +18,10 @@ from event_emitter import info, warn, error, parse_and_emit_training_line
 
 _PREPARE_BUCKETS_SUPPORTED = {"sd1x", "sdxl"}
 _UTF8_ENV = {"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".avif"}
+_RAW_CAPTION_EXTENSION = ".caption"
+_RAW_TAG_EXTENSION = ".wd14.txt"
+_EDITABLE_PROMPT_EXTENSION = ".prompt.txt"
 _RELATIVE_DATASET_PATH_ERROR = (
     "Dataset subset directory must be an absolute path: {path}. "
     "The browser folder picker may have returned only the folder name. "
@@ -83,7 +88,7 @@ def _get_effective_subset_dir(
 ) -> str:
     if opts.get("runResize", False):
         return os.path.join(work_dir, "resized", subset["workKey"])
-    return subset["imageDir"]
+    return os.path.join(work_dir, "prepared", subset["workKey"])
 
 
 def _get_shared_work_dir(work_dir: str) -> str:
@@ -96,6 +101,82 @@ def _get_wd14_model_dir(work_dir: str) -> str:
     model_dir = os.path.join(_get_shared_work_dir(work_dir), "wd14_tagger_model")
     os.makedirs(model_dir, exist_ok=True)
     return model_dir
+
+
+def _get_caption_extension(opts: dict[str, Any]) -> str:
+    extension = str(opts.get("captionExtension") or ".txt").strip()
+    if not extension:
+        return ".txt"
+    return extension if extension.startswith(".") else f".{extension}"
+
+
+def _iter_files(root_dir: str) -> list[Path]:
+    root = Path(root_dir)
+    if not root.exists():
+        return []
+    return sorted(path for path in root.rglob("*") if path.is_file())
+
+
+def _iter_image_files(root_dir: str) -> list[Path]:
+    return [
+        path
+        for path in _iter_files(root_dir)
+        if path.suffix.lower() in _IMAGE_EXTENSIONS
+    ]
+
+
+def _link_or_copy_file(src: Path, dst: Path) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists():
+        return
+
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
+def _prepare_effective_subset_dir(src_dir: str, dst_dir: str) -> int:
+    src_root = Path(src_dir)
+    dst_root = Path(dst_dir)
+    dst_root.mkdir(parents=True, exist_ok=True)
+    copied_files = 0
+
+    for src_path in _iter_files(src_dir):
+        rel_path = src_path.relative_to(src_root)
+        _link_or_copy_file(src_path, dst_root / rel_path)
+        copied_files += 1
+
+    return copied_files
+
+
+def _read_sidecar_text(sidecar_path: Path) -> str | None:
+    if not sidecar_path.is_file():
+        return None
+    return sidecar_path.read_text(encoding="utf-8", errors="replace").strip()
+
+
+def _materialize_editable_prompts(effective_dir: str, editable_extension: str) -> int:
+    created_count = 0
+    for image_path in _iter_image_files(effective_dir):
+        prompt_path = image_path.with_suffix(_EDITABLE_PROMPT_EXTENSION)
+        if prompt_path.exists():
+            continue
+
+        prompt_text = _read_sidecar_text(image_path.with_suffix(editable_extension))
+        if prompt_text is None:
+            prompt_text = _read_sidecar_text(
+                image_path.with_suffix(_RAW_CAPTION_EXTENSION)
+            )
+        if prompt_text is None:
+            prompt_text = _read_sidecar_text(image_path.with_suffix(_RAW_TAG_EXTENSION))
+        if prompt_text is None:
+            continue
+
+        prompt_path.write_text(f"{prompt_text}\n", encoding="utf-8")
+        created_count += 1
+
+    return created_count
 
 
 def _get_missing_python_modules(
@@ -133,10 +214,6 @@ def run_preprocessing(config: dict[str, Any]) -> bool:
     """
     opts: dict[str, Any] = config.get("preprocessOptions", {})
 
-    if opts.get("skipPreprocessing", False):
-        info("Preprocessing skipped by user (skipPreprocessing=true)")
-        return True
-
     work_dir: str = config["workDir"]
     sd_dir: str = config["sdScriptsDir"]
     python = sys.executable
@@ -146,11 +223,16 @@ def run_preprocessing(config: dict[str, Any]) -> bool:
         return False
 
     steps = []
-    run_resize = opts.get("runResize", False)
-    run_wd14 = opts.get("runWd14Tagger", True)
-    captioning = opts.get("runCaptioning", "none")
+    skip_preprocessing = opts.get("skipPreprocessing", False)
+    run_resize = opts.get("runResize", False) and not skip_preprocessing
+    run_wd14 = opts.get("runWd14Tagger", True) and not skip_preprocessing
+    captioning = opts.get("runCaptioning", "none") if not skip_preprocessing else "none"
+    caption_extension = _get_caption_extension(opts)
     model_type = str(config.get("modelType") or "")
     wd14_model_dir = _get_wd14_model_dir(work_dir)
+
+    if skip_preprocessing:
+        info("Preprocessing steps skipped by user; preparing managed dataset only")
 
     if (
         opts.get("runPrepareBuckets", False)
@@ -170,6 +252,15 @@ def run_preprocessing(config: dict[str, Any]) -> bool:
                     f"resize:{subset['label']}",
                     _resize_step(python, sd_dir, subset["imageDir"], out_dir, opts),
                 )
+            )
+    else:
+        for subset in dataset_subsets:
+            effective_dir = _get_effective_subset_dir(work_dir, subset, opts)
+            copied_files = _prepare_effective_subset_dir(
+                subset["imageDir"], effective_dir
+            )
+            info(
+                f"[preprocess] Prepared managed subset: {subset['label']} -> {effective_dir} ({copied_files} files)"
             )
 
     for subset in dataset_subsets:
@@ -196,14 +287,14 @@ def run_preprocessing(config: dict[str, Any]) -> bool:
             steps.append(
                 (
                     f"blip-caption:{subset['label']}",
-                    _blip_step(python, sd_dir, effective_dir, opts),
+                    _blip_step(python, sd_dir, effective_dir, caption_extension),
                 )
             )
         elif captioning == "git":
             steps.append(
                 (
                     f"git-caption:{subset['label']}",
-                    _git_step(python, sd_dir, effective_dir, opts),
+                    _git_step(python, sd_dir, effective_dir, caption_extension),
                 )
             )
 
@@ -212,6 +303,7 @@ def run_preprocessing(config: dict[str, Any]) -> bool:
             subset_meta_dir = os.path.join(work_dir, "metadata", subset["workKey"])
             os.makedirs(subset_meta_dir, exist_ok=True)
             meta_path = os.path.join(subset_meta_dir, "metadata.json")
+            metadata_for_buckets = meta_path
             if captioning != "none":
                 meta_capt = os.path.join(subset_meta_dir, "meta_capt.json")
                 steps.append(
@@ -222,14 +314,29 @@ def run_preprocessing(config: dict[str, Any]) -> bool:
                         ),
                     )
                 )
-                steps.append(
-                    (
-                        f"merge-tags:{subset['label']}",
-                        _merge_tags_step(
-                            python, sd_dir, effective_dir, meta_path, meta_capt, opts
-                        ),
+                metadata_for_buckets = meta_capt
+                if run_wd14:
+                    steps.append(
+                        (
+                            f"merge-tags:{subset['label']}",
+                            _merge_tags_step(
+                                python,
+                                sd_dir,
+                                effective_dir,
+                                meta_path,
+                                meta_capt,
+                                opts,
+                            ),
+                        )
                     )
-                )
+                    meta_clean = os.path.join(subset_meta_dir, "meta_clean.json")
+                    steps.append(
+                        (
+                            f"clean-metadata:{subset['label']}",
+                            _clean_step(python, sd_dir, meta_path, meta_clean),
+                        )
+                    )
+                    metadata_for_buckets = meta_clean
             else:
                 steps.append(
                     (
@@ -239,15 +346,7 @@ def run_preprocessing(config: dict[str, Any]) -> bool:
                         ),
                     )
                 )
-
-            # Step 5: Clean
-            meta_clean = os.path.join(subset_meta_dir, "meta_clean.json")
-            steps.append(
-                (
-                    f"clean-metadata:{subset['label']}",
-                    _clean_step(python, sd_dir, meta_path, meta_clean),
-                )
-            )
+                metadata_for_buckets = meta_path
 
             # Step 6: Prepare buckets/latents
             if opts.get("runPrepareBuckets", False):
@@ -258,17 +357,13 @@ def run_preprocessing(config: dict[str, Any]) -> bool:
                             python,
                             sd_dir,
                             effective_dir,
-                            meta_clean,
+                            metadata_for_buckets,
                             os.path.join(subset_meta_dir, "meta_final.json"),
                             config["baseModelPath"],
                             opts,
                         ),
                     )
                 )
-
-    if not steps:
-        info("Preprocessing skipped (all steps disabled)")
-        return True
 
     for name, cmd in steps:
         info(f"[preprocess] Starting: {name}")
@@ -278,6 +373,16 @@ def run_preprocessing(config: dict[str, Any]) -> bool:
             error(f"[preprocess] Failed at step: {name}")
             return False
         info(f"[preprocess] Done: {name}")
+
+    if not steps:
+        info("Preprocessing skipped (all heavy steps disabled)")
+
+    for subset in dataset_subsets:
+        effective_dir = _get_effective_subset_dir(work_dir, subset, opts)
+        created_count = _materialize_editable_prompts(effective_dir, caption_extension)
+        info(
+            f"[preprocess] Materialized editable prompts: {subset['label']} ({created_count} created)"
+        )
 
     return True
 
@@ -337,28 +442,38 @@ def _wd14_step(
         str(opts.get("wd14BatchSize", 8)),
         "--thresh",
         str(opts.get("wd14Threshold", 0.35)),
+        "--caption_extension",
+        _RAW_TAG_EXTENSION,
         "--recursive",
         img_dir,
     ]
 
 
-def _blip_step(python: str, sd_dir: str, img_dir: str, opts: dict) -> list[str]:
+def _blip_step(
+    python: str, sd_dir: str, img_dir: str, caption_extension: str
+) -> list[str]:
     return [
         python,
         os.path.join(sd_dir, "finetune", "make_captions.py"),
         "--batch_size",
         "4",
+        "--caption_extension",
+        caption_extension,
         "--recursive",
         img_dir,
     ]
 
 
-def _git_step(python: str, sd_dir: str, img_dir: str, opts: dict) -> list[str]:
+def _git_step(
+    python: str, sd_dir: str, img_dir: str, caption_extension: str
+) -> list[str]:
     return [
         python,
         os.path.join(sd_dir, "finetune", "make_captions_by_git.py"),
         "--batch_size",
         "4",
+        "--caption_extension",
+        caption_extension,
         "--recursive",
         img_dir,
     ]
@@ -373,7 +488,7 @@ def _merge_captions_step(
         img_dir,
         out_json,
         "--caption_extension",
-        opts.get("captionExtension", ".txt"),
+        _RAW_CAPTION_EXTENSION,
         "--full_path",
         "--recursive",
     ]
@@ -390,7 +505,7 @@ def _merge_tags_step(
         "--in_json",
         in_json,
         "--caption_extension",
-        ".txt",
+        _RAW_TAG_EXTENSION,
         "--full_path",
         "--recursive",
     ]
@@ -405,7 +520,7 @@ def _merge_tags_only_step(
         img_dir,
         out_json,
         "--caption_extension",
-        ".txt",
+        _RAW_TAG_EXTENSION,
         "--full_path",
         "--recursive",
     ]
