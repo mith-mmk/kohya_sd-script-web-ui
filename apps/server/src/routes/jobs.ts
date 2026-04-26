@@ -47,6 +47,16 @@ export async function jobRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  // Delete job history
+  app.delete<{ Params: { id: string } }>('/api/jobs/:id', async (req, reply) => {
+    try {
+      jobQueue.deleteJob(req.params.id);
+      return { ok: true };
+    } catch (err) {
+      reply.status(400).send({ error: String(err) });
+    }
+  });
+
   // Resume job (staged retry)
   app.post<{ Params: { id: string } }>('/api/jobs/:id/resume', async (req, reply) => {
     try {

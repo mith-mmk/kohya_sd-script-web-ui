@@ -16,6 +16,11 @@ from event_emitter import info, warn, error, parse_and_emit_training_line
 
 _PREPARE_BUCKETS_SUPPORTED = {"sd1x", "sdxl"}
 _UTF8_ENV = {"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+_RELATIVE_DATASET_PATH_ERROR = (
+    "Dataset subset directory must be an absolute path: {path}. "
+    "The browser folder picker may have returned only the folder name. "
+    "Use the desktop app or enter an absolute path manually."
+)
 
 
 def _subset_work_key(index: int, image_dir: str) -> str:
@@ -24,6 +29,12 @@ def _subset_work_key(index: int, image_dir: str) -> str:
     if not safe_name:
         safe_name = f"subset_{index + 1}"
     return f"{index + 1:02d}_{safe_name}"
+
+
+def _require_absolute_dataset_dir(image_dir: str) -> str:
+    if not os.path.isabs(image_dir):
+        raise ValueError(_RELATIVE_DATASET_PATH_ERROR.format(path=image_dir))
+    return image_dir
 
 
 def _resolve_dataset_subsets(config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -35,7 +46,7 @@ def _resolve_dataset_subsets(config: dict[str, Any]) -> list[dict[str, Any]]:
         subset_name = Path(image_dir).name or f"subset_{index + 1}"
         dataset_subsets.append(
             {
-                "imageDir": image_dir,
+                "imageDir": _require_absolute_dataset_dir(image_dir),
                 "triggerWord": str(raw_subset.get("triggerWord") or "").strip(),
                 "repeatCount": max(1, int(raw_subset.get("repeatCount") or 10)),
                 "workKey": _subset_work_key(index, image_dir),
@@ -52,7 +63,7 @@ def _resolve_dataset_subsets(config: dict[str, Any]) -> list[dict[str, Any]]:
 
     return [
         {
-            "imageDir": dataset_dir,
+            "imageDir": _require_absolute_dataset_dir(dataset_dir),
             "triggerWord": str(config.get("triggerWord") or "").strip(),
             "repeatCount": max(1, int(config.get("repeatCount") or 10)),
             "workKey": _subset_work_key(0, dataset_dir),

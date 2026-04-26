@@ -88,6 +88,16 @@ export function dbListJobs(): TrainJob[] {
   return rows.map(rowToJob);
 }
 
+export function dbDeleteJob(id: string): void {
+  const db = getDb();
+  const tx = db.transaction((jobId: string) => {
+    db.prepare('DELETE FROM job_logs WHERE job_id = ?').run(jobId);
+    db.prepare('DELETE FROM dataset_snapshots WHERE job_id = ?').run(jobId);
+    db.prepare('DELETE FROM jobs WHERE id = ?').run(jobId);
+  });
+  tx(id);
+}
+
 function rowToJob(row: Record<string, unknown>): TrainJob {
   return {
     id: row['id'] as string,

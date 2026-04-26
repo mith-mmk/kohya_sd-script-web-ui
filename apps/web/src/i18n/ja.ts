@@ -39,6 +39,7 @@ export interface Translations {
   sectionDatasets: string;
   sectionPaths: string;
   sectionPreproc: string;
+  sectionHistory: string;
   fieldJobName: string;
   fieldJobNamePlaceholder: string;
   fieldModelType: string;
@@ -82,7 +83,19 @@ export interface Translations {
   skipPreprocessing: string;
   submitBtn: string;
   submitting: string;
+  exportSettings: string;
+  importSettings: string;
+  historyEmpty: string;
+  historyApply: string;
+  historyDelete: string;
+  historyDeleteConfirm: (name: string) => string;
+  historyImported: string;
+  historyLastUsed: string;
+  historyOutputName: string;
+  historyStatus: string;
   errRequired: (field: string) => string;
+  errLocalPathAccess: string;
+  errImportSettings: string;
   // ── Console ────────────────────────────────────────
   consoleTitle: (n: number) => string;
   autoScrollOn: string;
@@ -133,6 +146,7 @@ const ja: Translations = {
   sectionDatasets: 'データセットサブセット',
   sectionPaths: 'パス設定',
   sectionPreproc: '前処理オプション',
+  sectionHistory: '設定ヒストリ',
   fieldJobName: 'ジョブ名',
   fieldJobNamePlaceholder: '例: my-character-v1',
   fieldModelType: 'モデルタイプ',
@@ -176,7 +190,19 @@ const ja: Translations = {
   skipPreprocessing: '前処理をスキップ（タグ・キャプションは既に用意済み）',
   submitBtn: '▶ 学習開始',
   submitting: '開始中…',
+  exportSettings: '設定を書き出し',
+  importSettings: '設定を読み込み',
+  historyEmpty: 'このモデルの過去設定はまだありません。',
+  historyApply: '適用',
+  historyDelete: '履歴から削除',
+  historyDeleteConfirm: (name: string) => `「${name}」を履歴から削除しますか？`,
+  historyImported: 'importした設定',
+  historyLastUsed: '作成日時',
+  historyOutputName: '出力名',
+  historyStatus: '状態',
   errRequired: (field: string) => `"${field}" は必須です`,
+  errLocalPathAccess: 'この実行環境ではローカルファイルパスを取得できません。デスクトップ版を使うか、絶対パスを手入力してください。',
+  errImportSettings: '設定ファイルの読み込みに失敗しました。対応する JSON を選んでください。',
   consoleTitle: (n: number) => `コンソール (${n} 行)`,
   autoScrollOn: '⏸ 自動スクロール',
   autoScrollOff: '▶ 自動スクロール',

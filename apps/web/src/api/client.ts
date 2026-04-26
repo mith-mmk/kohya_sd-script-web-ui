@@ -23,6 +23,7 @@ export const api = {
     }),
   startJob: (id: string) => req<{ ok: boolean }>(`${BASE}/jobs/${id}/start`, { method: 'POST' }),
   stopJob: (id: string) => req<{ ok: boolean }>(`${BASE}/jobs/${id}/stop`, { method: 'POST' }),
+  deleteJob: (id: string) => req<{ ok: boolean }>(`${BASE}/jobs/${id}`, { method: 'DELETE' }),
   resumeJob: (id: string) => req<{ ok: boolean }>(`${BASE}/jobs/${id}/resume`, { method: 'POST' }),
   getLogs: (id: string, since?: number) =>
     req<LogEvent[]>(`${BASE}/jobs/${id}/logs${since ? `?since=${since}` : ''}`),

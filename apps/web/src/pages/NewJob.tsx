@@ -1,16 +1,50 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
-import type { DatasetSubsetInput, TrainJobInput, PreprocessOptions, LoRAProfile, ModelType, TrainParams } from '../types/job.js';
+import type { DatasetSubsetInput, TrainJob, TrainJobInput, PreprocessOptions, LoRAProfile, ModelType, TrainParams } from '../types/job.js';
 import { useT } from '../i18n/LangContext.js';
 
 const MODEL_TYPES: ModelType[] = ['sd1x', 'sdxl', 'flux', 'anima'];
 const MAX_PREVIEW_IMAGES = 12;
 const IMAGE_FILE_RE = /\.(png|jpe?g|webp|bmp|gif)$/i;
 const PREPARE_BUCKETS_UNSUPPORTED = new Set<ModelType>(['flux', 'anima']);
+const HISTORY_LIMIT = 8;
+const SETTINGS_EXPORT_KIND = 'kohya-job-settings';
+const SETTINGS_EXPORT_VERSION = 1;
 const MODEL_REQUIRED_OVERRIDE_FIELDS: Partial<Record<ModelType, Array<keyof TrainParams>>> = {
   flux: ['clipL', 't5xxl', 'ae'],
   anima: ['qwen3', 'vae'],
+};
+
+const INITIAL_TRAIN_INPUT: TrainJobInput = {
+  name: '',
+  modelType: 'sdxl',
+  baseModelPath: '',
+  datasetDir: '',
+  outputDir: '',
+  outputName: '',
+  datasetSubsets: [],
+  sdScriptsDir: '',
+  triggerWord: '',
+  repeatCount: 10,
+  profileId: 'sdxl-standard',
+};
+
+const INITIAL_PREPROCESS_OPTIONS: Partial<PreprocessOptions> = {
+  runWd14Tagger: true,
+  wd14Threshold: 0.35,
+  wd14BatchSize: 8,
+  runCaptioning: 'none',
+  runPrepareBuckets: false,
+  skipPreprocessing: false,
+};
+
+type SerializedJobSettings = {
+  kind: typeof SETTINGS_EXPORT_KIND;
+  version: typeof SETTINGS_EXPORT_VERSION;
+  savedAt: string;
+  input: TrainJobInput;
+  preprocessOptions: Partial<PreprocessOptions>;
 };
 
 type PreviewItem = {
@@ -39,8 +73,14 @@ const S: Record<string, React.CSSProperties> = {
   summary: { fontSize: 12, color: '#a78bfa', cursor: 'pointer', userSelect: 'none' },
   checkRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 },
   sectionActions: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 14 },
+  historyActions: { display: 'flex', gap: 8, flexWrap: 'wrap' },
   actionBtn: { background: '#243b53', color: '#dbeafe', border: '1px solid #34567a', borderRadius: 6, padding: '6px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 600 },
   removeBtn: { background: '#3b1a1a', color: '#fecaca', border: '1px solid #7f1d1d', borderRadius: 6, padding: '6px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 600 },
+  historyList: { display: 'flex', flexDirection: 'column', gap: 10 },
+  historyCard: { background: '#141414', border: '1px solid #252525', borderRadius: 8, padding: '12px 14px', display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'center' },
+  historyTitle: { fontSize: 13, fontWeight: 700, color: '#e5e7eb', marginBottom: 4 },
+  historyMeta: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 6, fontSize: 12, color: '#777', minWidth: 360 },
+  historyButtons: { display: 'flex', gap: 8, flexShrink: 0 },
   subsetCard: { background: '#141414', border: '1px solid #252525', borderRadius: 8, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 },
   subsetHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
   subsetTitle: { fontSize: 13, fontWeight: 700, color: '#e5e7eb' },
@@ -60,15 +100,19 @@ function createSubsetId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `subset-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function createEmptyDatasetSubset(): EditableDatasetSubset {
+function createEditableDatasetSubset(source?: DatasetSubsetInput): EditableDatasetSubset {
   return {
     id: createSubsetId(),
-    imageDir: '',
-    triggerWord: '',
-    repeatCount: 10,
+    imageDir: source?.imageDir?.trim() ?? '',
+    triggerWord: source?.triggerWord?.trim() ?? '',
+    repeatCount: Math.max(1, Number(source?.repeatCount) || 10),
     previews: [],
     previewTotal: 0,
   };
+}
+
+function createEmptyDatasetSubset(): EditableDatasetSubset {
+  return createEditableDatasetSubset();
 }
 
 function revokePreviewUrls(previews: PreviewItem[]): void {
@@ -116,25 +160,96 @@ function buildPreviewItems(files: FileList | null): { previews: PreviewItem[]; t
   };
 }
 
+function buildEditableDatasetSubsets(input: TrainJobInput): EditableDatasetSubset[] {
+  const subsets = input.datasetSubsets?.length
+    ? input.datasetSubsets
+    : input.datasetDir.trim()
+      ? [{ imageDir: input.datasetDir, triggerWord: input.triggerWord, repeatCount: input.repeatCount }]
+      : [];
+
+  return subsets.length ? subsets.map(subset => createEditableDatasetSubset(subset)) : [createEmptyDatasetSubset()];
+}
+
+function normalizeDraftInput(input: TrainJobInput): TrainJobInput {
+  const normalizedDatasetSubsets = (input.datasetSubsets ?? [])
+    .map(subset => ({
+      imageDir: subset.imageDir?.trim() ?? '',
+      triggerWord: subset.triggerWord?.trim() || undefined,
+      repeatCount: Math.max(1, Number(subset.repeatCount) || 10),
+    }))
+    .filter(subset => subset.imageDir);
+
+  const primarySubset = normalizedDatasetSubsets[0];
+
+  return {
+    ...INITIAL_TRAIN_INPUT,
+    ...input,
+    name: input.name?.trim() ?? '',
+    modelType: input.modelType,
+    baseModelPath: input.baseModelPath?.trim() ?? '',
+    datasetDir: primarySubset?.imageDir ?? input.datasetDir?.trim() ?? '',
+    datasetSubsets: normalizedDatasetSubsets,
+    outputDir: input.outputDir?.trim() ?? '',
+    outputName: input.outputName?.trim() ?? '',
+    sdScriptsDir: input.sdScriptsDir?.trim() ?? '',
+    triggerWord: primarySubset?.triggerWord ?? input.triggerWord?.trim() ?? '',
+    repeatCount: primarySubset?.repeatCount ?? Math.max(1, Number(input.repeatCount) || 10),
+    profileId: input.profileId?.trim() ?? '',
+    overrides: sanitizeOverrides(input.overrides),
+  };
+}
+
+function isTrainJobInput(value: unknown): value is TrainJobInput {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate['modelType'] === 'string'
+    && typeof candidate['name'] === 'string'
+    && typeof candidate['baseModelPath'] === 'string'
+    && typeof candidate['datasetDir'] === 'string'
+    && typeof candidate['outputDir'] === 'string'
+    && typeof candidate['outputName'] === 'string';
+}
+
+function parseSerializedSettings(rawText: string): SerializedJobSettings {
+  const parsed = JSON.parse(rawText) as Partial<SerializedJobSettings>;
+  if (!parsed || parsed.kind !== SETTINGS_EXPORT_KIND || parsed.version !== SETTINGS_EXPORT_VERSION || !isTrainJobInput(parsed.input)) {
+    throw new Error('Invalid settings file');
+  }
+
+  return {
+    kind: SETTINGS_EXPORT_KIND,
+    version: SETTINGS_EXPORT_VERSION,
+    savedAt: typeof parsed.savedAt === 'string' ? parsed.savedAt : new Date().toISOString(),
+    input: parsed.input,
+    preprocessOptions: typeof parsed.preprocessOptions === 'object' && parsed.preprocessOptions
+      ? parsed.preprocessOptions
+      : {},
+  };
+}
+
+function getNativeFilePath(file: File): string | null {
+  const nativePath = (file as File & { path?: string }).path;
+  return typeof nativePath === 'string' && nativePath.trim() ? nativePath : null;
+}
+
 export default function NewJob() {
   const navigate = useNavigate();
   const { t } = useT();
   const [profiles, setProfiles] = useState<LoRAProfile[]>([]);
+  const [jobs, setJobs] = useState<TrainJob[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [datasetSubsets, setDatasetSubsets] = useState<EditableDatasetSubset[]>([createEmptyDatasetSubset()]);
   const datasetSubsetsRef = useRef(datasetSubsets);
+  const importRef = useRef<HTMLInputElement | null>(null);
 
-  const [input, setInput] = useState<TrainJobInput>({
-    name: '', modelType: 'sdxl', baseModelPath: '', datasetDir: '',
-    outputDir: '', outputName: '', datasetSubsets: [], sdScriptsDir: '', triggerWord: '', repeatCount: 10, profileId: 'sdxl-standard',
-  });
+  const [input, setInput] = useState<TrainJobInput>(INITIAL_TRAIN_INPUT);
 
-  const [preproc, setPreproc] = useState<Partial<PreprocessOptions>>({
-    runWd14Tagger: true, wd14Threshold: 0.35, wd14BatchSize: 8,
-    runCaptioning: 'none', runPrepareBuckets: false, skipPreprocessing: false,
-  });
+  const [preproc, setPreproc] = useState<Partial<PreprocessOptions>>(INITIAL_PREPROCESS_OPTIONS);
   const prepareBucketsSupported = !PREPARE_BUCKETS_UNSUPPORTED.has(input.modelType);
+  const historyJobs = jobs
+    .filter(job => job.modelType === input.modelType && job.status !== 'running')
+    .slice(0, HISTORY_LIMIT);
 
   useEffect(() => {
     api.listProfiles().then(ps => {
@@ -142,6 +257,7 @@ export default function NewJob() {
       const def = ps.find(p => p.id === `${input.modelType}-standard`);
       if (def) setInput(i => ({ ...i, profileId: def.id }));
     }).catch(console.error);
+    api.listJobs().then(setJobs).catch(console.error);
   }, []);
 
   useEffect(() => {
@@ -162,6 +278,74 @@ export default function NewJob() {
   const handleModelChange = (mt: ModelType) => {
     const def = profiles.find(p => p.id === `${mt}-standard`);
     setInput(i => ({ ...i, modelType: mt, profileId: def?.id ?? '' }));
+  };
+
+  const replaceDatasetSubsets = (nextSubsets: EditableDatasetSubset[]) => {
+    datasetSubsetsRef.current.forEach(subset => revokePreviewUrls(subset.previews));
+    setDatasetSubsets(nextSubsets);
+  };
+
+  const applyDraft = (nextInput: TrainJobInput, nextPreproc?: Partial<PreprocessOptions>) => {
+    setError('');
+    const normalizedInput = normalizeDraftInput(nextInput);
+    setInput(normalizedInput);
+    setPreproc({ ...INITIAL_PREPROCESS_OPTIONS, ...(nextPreproc ?? {}) });
+    replaceDatasetSubsets(buildEditableDatasetSubsets(normalizedInput));
+  };
+
+  const exportSettings = () => {
+    const normalizedSubsets = sanitizeDatasetSubsets(datasetSubsets);
+    const primarySubset = normalizedSubsets[0];
+    const payload: SerializedJobSettings = {
+      kind: SETTINGS_EXPORT_KIND,
+      version: SETTINGS_EXPORT_VERSION,
+      savedAt: new Date().toISOString(),
+      input: {
+        ...normalizeDraftInput(input),
+        datasetDir: primarySubset?.imageDir ?? input.datasetDir,
+        datasetSubsets: normalizedSubsets,
+        triggerWord: primarySubset?.triggerWord,
+        repeatCount: primarySubset?.repeatCount,
+        overrides: sanitizeOverrides(input.overrides),
+      },
+      preprocessOptions: { ...INITIAL_PREPROCESS_OPTIONS, ...preproc },
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    const safeName = (input.name || `${input.modelType}-settings`).replace(/[^a-z0-9-_]+/gi, '-');
+    anchor.href = url;
+    anchor.download = `${safeName}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importSettings = async (file: File | null) => {
+    if (!file) return;
+
+    try {
+      const parsed = parseSerializedSettings(await file.text());
+      applyDraft(parsed.input, parsed.preprocessOptions);
+    } catch {
+      setError(t.errImportSettings);
+    }
+  };
+
+  const applyHistoryJob = (job: TrainJob) => {
+    applyDraft(job.input, job.preprocessOptions);
+  };
+
+  const deleteHistoryJob = async (job: TrainJob) => {
+    if (!confirm(t.historyDeleteConfirm(job.name))) return;
+
+    setError('');
+    try {
+      await api.deleteJob(job.id);
+      setJobs(current => current.filter(item => item.id !== job.id));
+    } catch (err) {
+      setError(String(err));
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -265,7 +449,12 @@ export default function NewJob() {
     el.onchange = () => {
       const f = el.files?.[0];
       if (f) {
-        const fullPath = (f as File & { path?: string }).path ?? f.webkitRelativePath.split('/')[0];
+        const fullPath = getNativeFilePath(f);
+        if (!fullPath) {
+          setError(t.errLocalPathAccess);
+          return;
+        }
+        setError('');
         onSelected(fullPath, el.files ?? null);
       }
     };
@@ -285,7 +474,12 @@ export default function NewJob() {
     el.onchange = () => {
       const f = el.files?.[0];
       if (f) {
-        const fullPath = (f as File & { path?: string }).path ?? f.name;
+        const fullPath = getNativeFilePath(f);
+        if (!fullPath) {
+          setError(t.errLocalPathAccess);
+          return;
+        }
+        setError('');
         setInput(i => ({ ...i, [field]: fullPath }));
       }
     };
@@ -299,7 +493,12 @@ export default function NewJob() {
     el.onchange = () => {
       const f = el.files?.[0];
       if (f) {
-        const fullPath = (f as File & { path?: string }).path ?? f.name;
+        const fullPath = getNativeFilePath(f);
+        if (!fullPath) {
+          setError(t.errLocalPathAccess);
+          return;
+        }
+        setError('');
         setOverrideValue(field, fullPath);
       }
     };
@@ -348,6 +547,48 @@ export default function NewJob() {
     <div>
       <h1 style={S.h1}>{t.newJobTitle}</h1>
       <form style={S.form} onSubmit={handleSubmit}>
+        <div style={S.section}>
+          <div style={S.sectionActions}>
+            <div style={S.sectionTitle}>{t.sectionHistory}</div>
+            <div style={S.historyActions}>
+              <button type="button" style={S.actionBtn} onClick={exportSettings}>{t.exportSettings}</button>
+              <button type="button" style={S.actionBtn} onClick={() => importRef.current?.click()}>{t.importSettings}</button>
+              <input
+                ref={importRef}
+                type="file"
+                accept="application/json,.json"
+                style={{ display: 'none' }}
+                onChange={async e => {
+                  await importSettings(e.target.files?.[0] ?? null);
+                  e.currentTarget.value = '';
+                }}
+              />
+            </div>
+          </div>
+          {historyJobs.length === 0 ? (
+            <div style={S.hint}>{t.historyEmpty}</div>
+          ) : (
+            <div style={S.historyList}>
+              {historyJobs.map(job => (
+                <div key={job.id} style={S.historyCard}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={S.historyTitle}>{job.name || t.historyImported}</div>
+                    <div style={S.historyMeta}>
+                      <span>{t.historyLastUsed}: {new Date(job.createdAt).toLocaleString()}</span>
+                      <span>{t.historyOutputName}: {job.input.outputName || '—'}</span>
+                      <span>{t.historyStatus}: {job.status}</span>
+                    </div>
+                  </div>
+                  <div style={S.historyButtons}>
+                    <button type="button" style={S.actionBtn} onClick={() => applyHistoryJob(job)}>{t.historyApply}</button>
+                    <button type="button" style={S.removeBtn} onClick={() => deleteHistoryJob(job)}>{t.historyDelete}</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* ── Basic info ── */}
         <div style={S.section}>
           <div style={S.sectionTitle}>{t.sectionBasic}</div>

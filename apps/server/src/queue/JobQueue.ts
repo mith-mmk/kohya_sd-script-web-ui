@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { ModelType, TrainJob, TrainJobInput, PreprocessOptions, TrainParams, LogEvent, RetryConfig } from '../types/job.js';
 import { conservativeOverride, defaultPreprocessOptions } from '../types/job.js';
 import {
-  dbInsertJob, dbUpdateJob, dbGetJob, dbListJobs, dbInsertLog, dbGetProfile,
+  dbDeleteJob, dbInsertJob, dbUpdateJob, dbGetJob, dbListJobs, dbInsertLog, dbGetProfile,
 } from '../db/client.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -255,6 +255,21 @@ class JobQueue {
     }
   }
 
+  deleteJob(jobId: string): void {
+    const job = dbGetJob(jobId);
+    if (!job) throw new Error(`Job ${jobId} not found`);
+    if (this.processes.has(jobId) || job.status === 'running') {
+      throw new Error(`Job ${jobId} is still running`);
+    }
+
+    this.listeners.delete(jobId);
+    dbDeleteJob(jobId);
+
+    if (job.workDir && fs.existsSync(job.workDir)) {
+      fs.rmSync(job.workDir, { recursive: true, force: true });
+    }
+  }
+
   // ─── Update dataset (fine-tune loop) ────────────────────────────────────────
   updateDatasetConfig(jobId: string, updates: {
     addImages?: string[];
@@ -350,7 +365,7 @@ function validateInputForLaunch(
   validateExistingDirectory('sd-scripts directory', resolvedSdScriptsDir);
 
   for (const subset of datasetSubsets) {
-    validateExistingDirectory('Dataset subset directory', subset.imageDir);
+    validateConfiguredDirectory('Dataset subset directory', subset.imageDir);
   }
 
   validateModelPaths(input.modelType, params);
@@ -371,13 +386,13 @@ function validateModelPaths(modelType: ModelType, params: TrainParams): void {
     if (!value) {
       throw new Error(`${MODEL_PATH_LABELS[field] ?? String(field)} is required for ${modelType} jobs`);
     }
-    validateExistingPath(MODEL_PATH_LABELS[field] ?? String(field), value);
+    validateConfiguredPath(MODEL_PATH_LABELS[field] ?? String(field), value);
   }
 
   for (const field of optionalFields) {
     const value = getStringParam(params, field);
     if (value) {
-      validateExistingPath(MODEL_PATH_LABELS[field] ?? String(field), value);
+      validateConfiguredPath(MODEL_PATH_LABELS[field] ?? String(field), value);
     }
   }
 }
@@ -393,6 +408,16 @@ function validateExistingDirectory(label: string, targetPath: string): void {
   if (!fs.statSync(targetPath).isDirectory()) {
     throw new Error(`${label} is not a directory: ${targetPath}`);
   }
+}
+
+function validateConfiguredDirectory(label: string, targetPath: string): void {
+  if (!path.isAbsolute(targetPath)) return;
+  validateExistingDirectory(label, targetPath);
+}
+
+function validateConfiguredPath(label: string, targetPath: string): void {
+  if (!path.isAbsolute(targetPath)) return;
+  validateExistingPath(label, targetPath);
 }
 
 function validateExistingPath(label: string, targetPath: string): void {

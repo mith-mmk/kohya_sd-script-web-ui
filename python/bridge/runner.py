@@ -33,6 +33,12 @@ _DEFAULT_RESOLUTION = {
 }
 
 _UTF8_ENV = {"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+_FATAL_TRAINING_MARKERS = ("No data found.", "画像がありません")
+_RELATIVE_DATASET_PATH_ERROR = (
+    "Dataset subset directory must be an absolute path: {path}. "
+    "The browser folder picker may have returned only the folder name. "
+    "Use the desktop app or enter an absolute path manually."
+)
 
 
 def _subset_work_key(index: int, image_dir: str) -> str:
@@ -43,6 +49,12 @@ def _subset_work_key(index: int, image_dir: str) -> str:
     return f"{index + 1:02d}_{safe_name}"
 
 
+def _require_absolute_dataset_dir(image_dir: str) -> str:
+    if not os.path.isabs(image_dir):
+        raise ValueError(_RELATIVE_DATASET_PATH_ERROR.format(path=image_dir))
+    return image_dir
+
+
 def _resolve_dataset_subsets(config: dict[str, Any]) -> list[dict[str, Any]]:
     dataset_subsets: list[dict[str, Any]] = []
     for index, raw_subset in enumerate(config.get("datasetSubsets") or []):
@@ -51,7 +63,7 @@ def _resolve_dataset_subsets(config: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         dataset_subsets.append(
             {
-                "imageDir": image_dir,
+                "imageDir": _require_absolute_dataset_dir(image_dir),
                 "triggerWord": str(raw_subset.get("triggerWord") or "").strip(),
                 "repeatCount": max(1, int(raw_subset.get("repeatCount") or 10)),
                 "workKey": _subset_work_key(index, image_dir),
@@ -67,7 +79,7 @@ def _resolve_dataset_subsets(config: dict[str, Any]) -> list[dict[str, Any]]:
 
     return [
         {
-            "imageDir": dataset_dir,
+            "imageDir": _require_absolute_dataset_dir(dataset_dir),
             "triggerWord": str(config.get("triggerWord") or "").strip(),
             "repeatCount": max(1, int(config.get("repeatCount") or 10)),
             "workKey": _subset_work_key(0, dataset_dir),
@@ -174,16 +186,27 @@ def main() -> None:
         env={**os.environ, **_UTF8_ENV},
     )
 
+    fatal_training_error: str | None = None
     assert proc.stdout
     for line in proc.stdout:
         parse_and_emit_training_line(line)
+        if fatal_training_error is None and any(
+            marker in line for marker in _FATAL_TRAINING_MARKERS
+        ):
+            fatal_training_error = line.strip()
 
     proc.wait()
 
-    if proc.returncode == 0:
+    if proc.returncode == 0 and fatal_training_error is None:
         info("[phase:train] Training completed successfully")
         exit_event(0, "Training complete")
     else:
+        if fatal_training_error is not None:
+            error(
+                f"[phase:train] Fatal training error detected: {fatal_training_error}"
+            )
+            exit_event(1, fatal_training_error)
+            sys.exit(1)
         error(f"[phase:train] Training exited with code {proc.returncode}")
         exit_event(proc.returncode, f"Training failed with code {proc.returncode}")
         sys.exit(proc.returncode)
