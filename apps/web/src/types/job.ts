@@ -1,6 +1,17 @@
 export type ModelType = 'sd1x' | 'sdxl' | 'flux' | 'anima';
 export type JobStatus = 'queued' | 'running' | 'paused' | 'failed' | 'completed' | 'resumable';
 export type JobPhase = 'preprocess' | 'train' | 'done';
+export type TrainerType = 'lora';
+export type WorkflowStepId =
+  | 'image-normalize'
+  | 'resize'
+  | 'tagger'
+  | 'caption'
+  | 'merge-metadata'
+  | 'bucket-cache'
+  | 'dataset-config'
+  | 'train';
+export type WorkflowStepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
 
 export interface TrainParams {
   networkDim: number;
@@ -31,7 +42,17 @@ export interface TrainParams {
   llmAdapterPath?: string;
 }
 
+export interface AdvancedSettingsProfile {
+  id: string;
+  name: string;
+  description: string;
+  params: Partial<TrainParams>;
+  preprocessOptions: Partial<PreprocessOptions>;
+}
+
 export interface PreprocessOptions {
+  normalizeImages: boolean;
+  normalizedFormat: 'copy' | 'png' | 'jpg' | 'webp';
   runResize: boolean;
   maxResolution: string;
   runWd14Tagger: boolean;
@@ -52,7 +73,9 @@ export interface DatasetSubsetInput {
 
 export interface TrainJobInput {
   name: string;
+  trainerType?: TrainerType;
   modelType: ModelType;
+  workBaseDir?: string;
   baseModelPath: string;
   datasetDir: string;
   outputDir: string;
@@ -62,7 +85,37 @@ export interface TrainJobInput {
   triggerWord?: string;
   repeatCount?: number;
   profileId?: string;
+  advancedProfileId?: string;
   overrides?: Partial<TrainParams>;
+}
+
+export interface WorkflowArtifact {
+  kind: 'directory' | 'file' | 'state' | 'log';
+  path: string;
+  label?: string;
+  createdAt: string;
+}
+
+export interface WorkflowStepManifest {
+  id: WorkflowStepId;
+  name: string;
+  status: WorkflowStepStatus;
+  startedAt?: string;
+  endedAt?: string;
+  command?: string[];
+  outputs: WorkflowArtifact[];
+  error?: string;
+}
+
+export interface WorkflowManifest {
+  version: 1;
+  jobId: string;
+  trainerType: TrainerType;
+  workDir: string;
+  createdAt: string;
+  updatedAt: string;
+  resumeFromStep?: WorkflowStepId;
+  steps: WorkflowStepManifest[];
 }
 
 export interface TrainJob {
@@ -76,6 +129,7 @@ export interface TrainJob {
   input: TrainJobInput;
   preprocessOptions: PreprocessOptions;
   params: TrainParams;
+  manifest?: WorkflowManifest;
   errorMessage?: string;
   retryCount: number;
   createdAt: string;

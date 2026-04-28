@@ -23,6 +23,7 @@
     "files": ["dist/**/*"],
     "extraResources": [
       { "from": "../server/dist", "to": "server/dist" },
+      { "from": "../web/dist", "to": "web/dist" },
       { "from": "../../python", "to": "python" },
       { "from": "../../sd-scripts", "to": "sd-scripts" },
       { "from": "../../.venv", "to": ".venv" }

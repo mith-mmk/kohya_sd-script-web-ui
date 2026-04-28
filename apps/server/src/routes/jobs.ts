@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { jobQueue } from '../queue/JobQueue.js';
 import type { TrainJob, TrainJobInput, PreprocessOptions } from '../types/job.js';
+import { ADVANCED_SETTINGS_PROFILES } from '../types/job.js';
 import { dbGetLogs, dbListProfiles } from '../db/client.js';
 
 const MANAGED_PROMPT_EXTENSION = '.prompt.txt';
@@ -284,6 +285,7 @@ export async function jobRoutes(app: FastifyInstance): Promise<void> {
 
   // List profiles
   app.get('/api/profiles', async () => dbListProfiles());
+  app.get('/api/advanced-profiles', async () => ADVANCED_SETTINGS_PROFILES);
 
   // WebSocket log stream
   app.get<{ Params: { id: string } }>(

@@ -10,6 +10,17 @@ export type JobStatus =
   | 'resumable';
 
 export type JobPhase = 'preprocess' | 'train' | 'done';
+export type TrainerType = 'lora';
+export type WorkflowStepId =
+  | 'image-normalize'
+  | 'resize'
+  | 'tagger'
+  | 'caption'
+  | 'merge-metadata'
+  | 'bucket-cache'
+  | 'dataset-config'
+  | 'train';
+export type WorkflowStepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
 
 // ─── Training parameters ──────────────────────────────────────────────────────
 export interface TrainParams {
@@ -44,6 +55,14 @@ export interface TrainParams {
   llmAdapterPath?: string;
 }
 
+export interface AdvancedSettingsProfile {
+  id: string;
+  name: string;
+  description: string;
+  params: Partial<TrainParams>;
+  preprocessOptions: Partial<PreprocessOptions>;
+}
+
 // ─── Fixed parameter profile ──────────────────────────────────────────────────
 export interface LoRAProfile {
   id: string;
@@ -55,6 +74,8 @@ export interface LoRAProfile {
 
 // ─── Preprocessing ────────────────────────────────────────────────────────────
 export interface PreprocessOptions {
+  normalizeImages: boolean;
+  normalizedFormat: 'copy' | 'png' | 'jpg' | 'webp';
   runResize: boolean;
   maxResolution: string;
   runWd14Tagger: boolean;
@@ -74,6 +95,8 @@ export interface DatasetSubsetInput {
 }
 
 export const defaultPreprocessOptions: PreprocessOptions = {
+  normalizeImages: true,
+  normalizedFormat: 'copy',
   runResize: false,
   maxResolution: '1024x1024',
   runWd14Tagger: true,
@@ -89,7 +112,9 @@ export const defaultPreprocessOptions: PreprocessOptions = {
 // ─── Job input ────────────────────────────────────────────────────────────────
 export interface TrainJobInput {
   name: string;
+  trainerType?: TrainerType;
   modelType: ModelType;
+  workBaseDir?: string;
   baseModelPath: string;
   datasetDir: string;
   outputDir: string;
@@ -99,7 +124,37 @@ export interface TrainJobInput {
   triggerWord?: string;
   repeatCount?: number;
   profileId?: string;
+  advancedProfileId?: string;
   overrides?: Partial<TrainParams>;
+}
+
+export interface WorkflowArtifact {
+  kind: 'directory' | 'file' | 'state' | 'log';
+  path: string;
+  label?: string;
+  createdAt: string;
+}
+
+export interface WorkflowStepManifest {
+  id: WorkflowStepId;
+  name: string;
+  status: WorkflowStepStatus;
+  startedAt?: string;
+  endedAt?: string;
+  command?: string[];
+  outputs: WorkflowArtifact[];
+  error?: string;
+}
+
+export interface WorkflowManifest {
+  version: 1;
+  jobId: string;
+  trainerType: TrainerType;
+  workDir: string;
+  createdAt: string;
+  updatedAt: string;
+  resumeFromStep?: WorkflowStepId;
+  steps: WorkflowStepManifest[];
 }
 
 // ─── Dataset snapshot (for fine-tune loop) ────────────────────────────────────
@@ -124,6 +179,7 @@ export interface TrainJob {
   input: TrainJobInput;
   preprocessOptions: PreprocessOptions;
   params: TrainParams;
+  manifest?: WorkflowManifest;
   errorMessage?: string;
   retryCount: number;
   snapshotId?: string;
@@ -156,6 +212,7 @@ export type RetryTier = 'latest-state' | 'prev-state' | 'model-conservative';
 export interface RetryConfig {
   tier: RetryTier;
   stateDir?: string;
+  resumeFromStep?: WorkflowStepId;
   paramsOverride?: Partial<TrainParams>;
 }
 
@@ -263,5 +320,45 @@ export const DEFAULT_PROFILES: LoRAProfile[] = [
       saveModelAs: 'safetensors',
     },
     lockedFields: ['networkDim', 'networkAlpha', 'optimizerType', 'saveState'],
+  },
+];
+
+export const ADVANCED_SETTINGS_PROFILES: AdvancedSettingsProfile[] = [
+  {
+    id: 'balanced',
+    name: 'Balanced',
+    description: 'A stable default for first runs.',
+    params: {},
+    preprocessOptions: {},
+  },
+  {
+    id: 'low-vram',
+    name: 'Low VRAM',
+    description: 'Trades speed for memory headroom.',
+    params: {
+      batchSize: 1,
+      gradientCheckpointing: true,
+      cacheLatents: true,
+      cacheLatentsToDisk: true,
+      mixedPrecision: 'bf16',
+    },
+    preprocessOptions: {
+      runPrepareBuckets: true,
+    },
+  },
+  {
+    id: 'fast-iteration',
+    name: 'Fast Iteration',
+    description: 'Short runs with frequent checkpoints.',
+    params: {
+      maxTrainEpochs: 1,
+      saveEveryNSteps: 100,
+      saveState: true,
+    },
+    preprocessOptions: {
+      runWd14Tagger: false,
+      runCaptioning: 'none',
+      runPrepareBuckets: false,
+    },
   },
 ];

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
-import type { DatasetSubsetInput, TrainJob, TrainJobInput, PreprocessOptions, LoRAProfile, ModelType, TrainParams } from '../types/job.js';
+import type { DatasetSubsetInput, TrainJob, TrainJobInput, PreprocessOptions, LoRAProfile, ModelType, TrainParams, AdvancedSettingsProfile } from '../types/job.js';
 import { useT } from '../i18n/LangContext.js';
 
 const MODEL_TYPES: ModelType[] = ['sd1x', 'sdxl', 'flux', 'anima'];
@@ -18,7 +18,9 @@ const MODEL_REQUIRED_OVERRIDE_FIELDS: Partial<Record<ModelType, Array<keyof Trai
 
 const INITIAL_TRAIN_INPUT: TrainJobInput = {
   name: '',
+  trainerType: 'lora',
   modelType: 'sdxl',
+  workBaseDir: '',
   baseModelPath: '',
   datasetDir: '',
   outputDir: '',
@@ -28,9 +30,12 @@ const INITIAL_TRAIN_INPUT: TrainJobInput = {
   triggerWord: '',
   repeatCount: 10,
   profileId: 'sdxl-standard',
+  advancedProfileId: 'balanced',
 };
 
 const INITIAL_PREPROCESS_OPTIONS: Partial<PreprocessOptions> = {
+  normalizeImages: true,
+  normalizedFormat: 'copy',
   runWd14Tagger: true,
   wd14Threshold: 0.35,
   wd14BatchSize: 8,
@@ -75,6 +80,7 @@ type EditableDatasetSubset = DatasetSubsetInput & {
 };
 
 type PathHistoryKey =
+  | 'workBaseDir'
   | 'sdScriptsDir'
   | 'baseModelPath'
   | 'outputDir'
@@ -234,10 +240,12 @@ function normalizeDraftInput(input: TrainJobInput): TrainJobInput {
     datasetSubsets: normalizedDatasetSubsets,
     outputDir: input.outputDir?.trim() ?? '',
     outputName: input.outputName?.trim() ?? '',
+    workBaseDir: input.workBaseDir?.trim() ?? '',
     sdScriptsDir: input.sdScriptsDir?.trim() ?? '',
     triggerWord: primarySubset?.triggerWord ?? input.triggerWord?.trim() ?? '',
     repeatCount: primarySubset?.repeatCount ?? Math.max(1, Number(input.repeatCount) || 10),
     profileId: input.profileId?.trim() ?? '',
+    advancedProfileId: input.advancedProfileId?.trim() ?? 'balanced',
     overrides: sanitizeOverrides(input.overrides),
   };
 }
@@ -322,6 +330,7 @@ function buildPathHistory(jobs: TrainJob[], modelType: ModelType): Record<PathHi
   };
 
   return {
+    workBaseDir: collectRecentValues(jobs.map(job => job.input.workBaseDir ?? job.workDir)),
     sdScriptsDir: collectRecentValues(jobs.map(job => job.input.sdScriptsDir)),
     baseModelPath: collectRecentValues(modelJobs.map(job => job.input.baseModelPath)),
     outputDir: collectRecentValues(jobs.map(job => job.input.outputDir)),
@@ -339,6 +348,7 @@ export default function NewJob() {
   const navigate = useNavigate();
   const { t } = useT();
   const [profiles, setProfiles] = useState<LoRAProfile[]>([]);
+  const [advancedProfiles, setAdvancedProfiles] = useState<AdvancedSettingsProfile[]>([]);
   const [jobs, setJobs] = useState<TrainJob[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -361,6 +371,7 @@ export default function NewJob() {
       const def = ps.find(p => p.id === `${input.modelType}-standard`);
       if (def) setInput(i => ({ ...i, profileId: def.id }));
     }).catch(console.error);
+    api.listAdvancedProfiles().then(setAdvancedProfiles).catch(console.error);
     api.listJobs().then(setJobs).catch(console.error);
   }, []);
 
@@ -782,6 +793,32 @@ export default function NewJob() {
               </div>
             </div>
             <div style={S.row}>
+              <label style={S.label}>Advanced settings profile</label>
+              <select
+                style={S.select}
+                value={input.advancedProfileId ?? 'balanced'}
+                onChange={e => {
+                  const profile = advancedProfiles.find(item => item.id === e.target.value);
+                  setInput(current => ({
+                    ...current,
+                    advancedProfileId: e.target.value,
+                    overrides: { ...(current.overrides ?? {}), ...(profile?.params ?? {}) },
+                  }));
+                  if (profile?.preprocessOptions) {
+                    setPreproc(current => ({ ...current, ...profile.preprocessOptions }));
+                  }
+                }}
+              >
+                {advancedProfiles.map(profile => (
+                  <option key={profile.id} value={profile.id}>{profile.name}</option>
+                ))}
+              </select>
+              <div style={S.hint}>
+                {advancedProfiles.find(profile => profile.id === input.advancedProfileId)?.description
+                  ?? 'Select a reusable advanced profile for trainer-specific settings.'}
+              </div>
+            </div>
+            <div style={S.row}>
               <label style={S.label}>{t.fieldKohyaSsDir}</label>
               <div style={S.inputRow}>
                 <input style={S.input} placeholder={t.fieldKohyaSsDirPlaceholder} list="path-history-sdScriptsDir" {...inp('sdScriptsDir')} />
@@ -886,6 +923,17 @@ export default function NewJob() {
         <div style={S.section}>
           <div style={S.sectionTitle}>{t.sectionPaths}</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={S.row}>
+              <label style={S.label}>Working folder</label>
+              <div style={S.inputRow}>
+                <input style={S.input} placeholder="Blank uses the default data/work folder" list="path-history-workBaseDir" {...inp('workBaseDir')} />
+                <button type="button" style={S.browseBtn} onClick={() => browseFolder('workBaseDir')}>{t.browseFolder}</button>
+              </div>
+              {renderPathSuggestions(pathHistory.workBaseDir, value => setInputValue('workBaseDir', value))}
+              <datalist id="path-history-workBaseDir">
+                {pathHistory.workBaseDir.map(value => <option key={value} value={value} />)}
+              </datalist>
+            </div>
             {/* Base model — file picker */}
             <div style={S.row}>
               <label style={S.label}>{t.fieldBaseModelPath}</label>
@@ -1049,6 +1097,23 @@ export default function NewJob() {
         <details style={{ ...S.section, ...(preproc.skipPreprocessing ? { opacity: 0.4, pointerEvents: 'none' } : {}) }}>
           <summary style={S.summary}>▶ {t.sectionPreproc}</summary>
           <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <label style={S.checkRow}>
+              <input type="checkbox" checked={preproc.normalizeImages !== false}
+                onChange={e => setPreproc(p => ({ ...p, normalizeImages: e.target.checked }))} />
+              Image normalization
+            </label>
+            {preproc.normalizeImages !== false && (
+              <div style={S.row}>
+                <label style={S.label}>Normalized image format</label>
+                <select style={S.select} value={preproc.normalizedFormat ?? 'copy'}
+                  onChange={e => setPreproc(p => ({ ...p, normalizedFormat: e.target.value as PreprocessOptions['normalizedFormat'] }))}>
+                  <option value="copy">Copy original format</option>
+                  <option value="png">PNG</option>
+                  <option value="jpg">JPEG</option>
+                  <option value="webp">WebP</option>
+                </select>
+              </div>
+            )}
             <label style={S.checkRow}>
               <input type="checkbox" checked={!!preproc.runWd14Tagger}
                 onChange={e => setPreproc(p => ({ ...p, runWd14Tagger: e.target.checked }))} />

@@ -40,7 +40,7 @@ const S: Record<string, any> = {
   error: { background: '#3b0404', border: '1px solid #7f1d1d', borderRadius: 6, padding: '10px 14px', color: '#fca5a5', fontSize: 13, marginBottom: 16 },
 };
 
-type Tab = 'console' | 'params' | 'tags';
+type Tab = 'console' | 'params' | 'steps' | 'tags';
 
 export default function JobDetail() {
   const { id } = useParams<{ id: string }>();
@@ -144,16 +144,47 @@ export default function JobDetail() {
 
       {/* Tabs */}
       <div style={S.tabs}>
-        {(['console', 'params', 'tags'] as Tab[]).map(tabKey => (
+        {(['console', 'params', 'steps', 'tags'] as Tab[]).map(tabKey => (
           <button key={tabKey} style={S.tab(tab === tabKey)} onClick={() => setTab(tabKey)}>
-            {tabKey === 'console' ? t.tabConsole : tabKey === 'params' ? t.tabParams : t.tabTags}
+            {tabKey === 'console' ? t.tabConsole : tabKey === 'params' ? t.tabParams : tabKey === 'steps' ? 'Steps' : t.tabTags}
           </button>
         ))}
       </div>
 
       {tab === 'console' && <Console events={logs} />}
       {tab === 'params' && <ParamsView params={job.params} />}
+      {tab === 'steps' && <StepsView job={job} />}
       {tab === 'tags' && <TagEditor jobId={job.id} jobStatus={job.status} />}
+    </div>
+  );
+}
+
+function StepsView({ job }: { job: TrainJob }) {
+  const steps = job.manifest?.steps ?? [];
+  if (!steps.length) {
+    return (
+      <div style={S.card}>
+        <div style={S.cardTitle}>Workflow steps</div>
+        <div style={S.key}>No manifest has been recorded for this job.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ ...S.card, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={S.cardTitle}>Workflow steps</div>
+      {job.manifest?.resumeFromStep && (
+        <div style={S.error}>Resume will start from: {job.manifest.resumeFromStep}</div>
+      )}
+      {steps.map(step => (
+        <div key={step.id} style={{ display: 'grid', gridTemplateColumns: '180px 120px 1fr', gap: 12, alignItems: 'center', borderBottom: '1px solid #222', paddingBottom: 8 }}>
+          <div style={{ color: '#e0e0e0', fontWeight: 600 }}>{step.name}</div>
+          <div style={{ color: step.status === 'failed' ? '#f87171' : step.status === 'completed' ? '#4ade80' : '#888' }}>{step.status}</div>
+          <div style={{ color: '#888', fontSize: 12 }}>
+            {step.error ?? step.outputs.map(output => output.path).join(', ') ?? ''}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

@@ -3,10 +3,10 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { v4 as uuidv4 } from 'uuid';
-import type { ModelType, TrainJob, TrainJobInput, PreprocessOptions, TrainParams, LogEvent, RetryConfig } from '../types/job.js';
-import { conservativeOverride, defaultPreprocessOptions } from '../types/job.js';
+import type { ModelType, TrainJob, TrainJobInput, PreprocessOptions, TrainParams, LogEvent, RetryConfig, WorkflowManifest, WorkflowStepId } from '../types/job.js';
+import { ADVANCED_SETTINGS_PROFILES, conservativeOverride, defaultPreprocessOptions } from '../types/job.js';
 import {
-  dbDeleteJob, dbInsertJob, dbUpdateJob, dbGetJob, dbListJobs, dbInsertLog, dbGetProfile,
+  dbDeleteJob, dbInsertJob, dbUpdateJob, dbGetJob, dbListJobs, dbInsertLog, dbGetProfile, dbUpsertWorkflowManifest,
 } from '../db/client.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -34,6 +34,16 @@ const MODEL_PATH_LABELS: Partial<Record<keyof TrainParams, string>> = {
 };
 
 type LogListener = (event: LogEvent) => void;
+const WORKFLOW_STEPS: Array<{ id: WorkflowStepId; name: string }> = [
+  { id: 'image-normalize', name: 'Image normalization' },
+  { id: 'resize', name: 'Resize/crop' },
+  { id: 'tagger', name: 'Tagger' },
+  { id: 'caption', name: 'Captioning' },
+  { id: 'merge-metadata', name: 'Merge metadata' },
+  { id: 'bucket-cache', name: 'Bucket/latent cache' },
+  { id: 'dataset-config', name: 'Dataset config' },
+  { id: 'train', name: 'Training' },
+];
 
 class JobQueue {
   private processes = new Map<string, ChildProcess>();
@@ -61,7 +71,11 @@ class JobQueue {
     preprocessOptions?: Partial<PreprocessOptions>,
   ): TrainJob {
     const normalizedInput = normalizeTrainJobInput(input);
-    const resolvedPreprocessOptions = resolvePreprocessOptions(normalizedInput.modelType, preprocessOptions);
+    const advancedProfile = ADVANCED_SETTINGS_PROFILES.find(profile => profile.id === normalizedInput.advancedProfileId);
+    const resolvedPreprocessOptions = resolvePreprocessOptions(normalizedInput.modelType, {
+      ...(advancedProfile?.preprocessOptions ?? {}),
+      ...(preprocessOptions ?? {}),
+    });
     const resolvedSdScriptsDir = resolveSdScriptsDir(normalizedInput);
     const id = uuidv4();
     const now = new Date().toISOString();
@@ -71,6 +85,9 @@ class JobQueue {
     const baseParams: TrainParams = profile ? { ...profile.params } : getDefaultParams(normalizedInput.modelType);
     const lockedFields = new Set(profile?.lockedFields ?? []);
     const resolved: TrainParams = { ...baseParams };
+    if (advancedProfile?.params) {
+      Object.assign(resolved, advancedProfile.params);
+    }
     if (normalizedInput.overrides) {
       for (const [k, v] of Object.entries(normalizedInput.overrides)) {
         if (!lockedFields.has(k as keyof TrainParams)) {
@@ -83,17 +100,20 @@ class JobQueue {
     validateInputForLaunch(normalizedInput, resolvedPreprocessOptions, resolved, resolvedSdScriptsDir);
 
     fs.mkdirSync(normalizedInput.outputDir, { recursive: true });
-    const workDir = path.join(WORK_BASE, id);
+    const workDir = path.join(resolveWorkBaseDir(normalizedInput), id);
     fs.mkdirSync(workDir, { recursive: true });
+    const manifest = createWorkflowManifest(id, workDir, normalizedInput.trainerType ?? 'lora');
 
     const job: TrainJob = {
       id, name: input.name, status: 'queued', currentPhase: 'preprocess',
       modelType: normalizedInput.modelType, workDir, input: normalizedInput,
       preprocessOptions: resolvedPreprocessOptions,
       params: resolved,
+      manifest,
       retryCount: 0, createdAt: now, updatedAt: now,
     };
     dbInsertJob(job);
+    dbUpsertWorkflowManifest(manifest);
     return job;
   }
 
@@ -128,10 +148,12 @@ class JobQueue {
       preprocessOptions: job.preprocessOptions,
       params: job.params,
       resume: retryConfig?.stateDir ?? job.stateDir ?? null,
+      resumeFromStep: retryConfig?.resumeFromStep ?? job.manifest?.resumeFromStep ?? null,
       paramsOverride: retryConfig?.paramsOverride ?? null,
       retryTier: retryConfig?.tier ?? null,
     };
     fs.writeFileSync(configPath, JSON.stringify(bridgeConfig, null, 2), 'utf-8');
+    this.updateManifestStep(jobId, retryConfig?.resumeFromStep ?? 'image-normalize', 'running');
 
     const proc = spawn(PYTHON_BIN, [
       path.join(BRIDGE_DIR, 'runner.py'),
@@ -183,10 +205,12 @@ class JobQueue {
     if (!job || job.status === 'completed') return;
 
     if (code === 0) {
+      this.updateManifestStep(jobId, 'train', 'completed');
       dbUpdateJob(jobId, { status: 'completed', currentPhase: 'done', completedAt: new Date().toISOString() });
       this.sysLog(jobId, 'info', `Job completed successfully`);
     } else {
       const nextTier = this.getNextRetryTier(job);
+      this.updateManifestStep(jobId, 'train', 'failed', message);
       if (nextTier) {
         dbUpdateJob(jobId, { status: 'resumable', errorMessage: message, retryCount: job.retryCount + 1 });
         this.sysLog(jobId, 'warn', `Job failed (tier ${nextTier} available). Click Resume to retry.`);
@@ -222,13 +246,14 @@ class JobQueue {
 
   private async buildRetryConfig(job: TrainJob, tier: RetryConfig['tier']): Promise<RetryConfig> {
     const states = this.discoverStateDirs(job);
+    const resumeFromStep = job.manifest?.resumeFromStep ?? 'train';
     switch (tier) {
       case 'latest-state':
-        return { tier, stateDir: states[0] };
+        return { tier, stateDir: states[0], resumeFromStep };
       case 'prev-state':
-        return { tier, stateDir: states[1] ?? states[0] };
+        return { tier, stateDir: states[1] ?? states[0], resumeFromStep };
       case 'model-conservative':
-        return { tier, paramsOverride: conservativeOverride };
+        return { tier, resumeFromStep, paramsOverride: conservativeOverride };
     }
   }
 
@@ -250,6 +275,7 @@ class JobQueue {
     if (proc) {
       proc.kill('SIGTERM');
       this.processes.delete(jobId);
+      this.updateManifestStep(jobId, 'train', 'failed', 'Stopped by user');
       dbUpdateJob(jobId, { status: 'resumable' });
       this.sysLog(jobId, 'warn', 'Job stopped by user');
     }
@@ -285,6 +311,23 @@ class JobQueue {
 
   list(): TrainJob[] { return dbListJobs(); }
   get(id: string): TrainJob | null { return dbGetJob(id); }
+
+  private updateManifestStep(jobId: string, stepId: WorkflowStepId, status: 'running' | 'completed' | 'failed', errorMessage?: string): void {
+    const job = dbGetJob(jobId);
+    const manifest = job?.manifest;
+    if (!manifest) return;
+    const step = manifest.steps.find(item => item.id === stepId);
+    if (!step) return;
+    const now = new Date().toISOString();
+    if (status === 'running') step.startedAt = step.startedAt ?? now;
+    if (status === 'completed' || status === 'failed') step.endedAt = now;
+    step.status = status;
+    step.error = errorMessage;
+    if (status === 'failed') manifest.resumeFromStep = stepId;
+    if (status === 'completed' && manifest.resumeFromStep === stepId) manifest.resumeFromStep = undefined;
+    manifest.updatedAt = now;
+    dbUpsertWorkflowManifest(manifest);
+  }
 }
 
 // Singleton
@@ -318,17 +361,43 @@ function normalizeTrainJobInput(input: TrainJobInput): TrainJobInput {
   const primarySubset = datasetSubsets[0];
   return {
     ...input,
+    trainerType: input.trainerType ?? 'lora',
     name: input.name.trim(),
     baseModelPath: input.baseModelPath.trim(),
     datasetDir: primarySubset?.imageDir ?? fallbackDatasetDir,
     datasetSubsets,
     outputDir: input.outputDir.trim(),
     outputName: input.outputName.trim(),
+    workBaseDir: input.workBaseDir?.trim() || undefined,
     profileId: input.profileId?.trim() || undefined,
+    advancedProfileId: input.advancedProfileId?.trim() || 'balanced',
     sdScriptsDir: input.sdScriptsDir?.trim() || undefined,
     triggerWord: primarySubset?.triggerWord ?? (input.triggerWord?.trim() || undefined),
     repeatCount: primarySubset?.repeatCount ?? Math.max(1, Number(input.repeatCount) || 10),
     overrides,
+  };
+}
+
+function resolveWorkBaseDir(input: TrainJobInput): string {
+  return input.workBaseDir?.trim()
+    ? path.resolve(input.workBaseDir)
+    : WORK_BASE;
+}
+
+function createWorkflowManifest(jobId: string, workDir: string, trainerType: NonNullable<TrainJobInput['trainerType']>): WorkflowManifest {
+  const now = new Date().toISOString();
+  return {
+    version: 1,
+    jobId,
+    trainerType,
+    workDir,
+    createdAt: now,
+    updatedAt: now,
+    steps: WORKFLOW_STEPS.map(step => ({
+      ...step,
+      status: 'pending',
+      outputs: [],
+    })),
   };
 }
 

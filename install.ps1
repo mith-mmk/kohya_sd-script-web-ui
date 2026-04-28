@@ -318,9 +318,11 @@ Write-Host "============================================================" -Foreg
 Write-Host "  インストール完了！" -ForegroundColor Green
 Write-Host ""
 Write-Host "  起動方法:" -ForegroundColor White
+Write-Host "    1クリック起動: .\start-desktop.bat" -ForegroundColor Gray
 Write-Host "    開発モード  : npm run dev" -ForegroundColor Gray
+Write-Host "    GUI起動     : npm run desktop" -ForegroundColor Gray
 Write-Host "    本番ビルド  : npm run build" -ForegroundColor Gray
-Write-Host "    デスクトップ: cd apps\desktop ; npm run dev" -ForegroundColor Gray
+Write-Host "    配布パッケージ: npm run package:desktop" -ForegroundColor Gray
 Write-Host "============================================================" -ForegroundColor Magenta
 Write-Host ""
 Read-Host "Enterで閉じる"

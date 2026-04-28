@@ -3,7 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { SCHEMA_SQL } from './schema.js';
-import type { TrainJob, LogEvent, LoRAProfile, DatasetSnapshot } from '../types/job.js';
+import type { TrainJob, LogEvent, LoRAProfile, DatasetSnapshot, WorkflowManifest } from '../types/job.js';
 import { DEFAULT_PROFILES } from '../types/job.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -93,14 +93,16 @@ export function dbDeleteJob(id: string): void {
   const tx = db.transaction((jobId: string) => {
     db.prepare('DELETE FROM job_logs WHERE job_id = ?').run(jobId);
     db.prepare('DELETE FROM dataset_snapshots WHERE job_id = ?').run(jobId);
+    db.prepare('DELETE FROM workflow_manifests WHERE job_id = ?').run(jobId);
     db.prepare('DELETE FROM jobs WHERE id = ?').run(jobId);
   });
   tx(id);
 }
 
 function rowToJob(row: Record<string, unknown>): TrainJob {
+  const id = row['id'] as string;
   return {
-    id: row['id'] as string,
+    id,
     name: row['name'] as string,
     status: row['status'] as TrainJob['status'],
     currentPhase: row['current_phase'] as TrainJob['currentPhase'],
@@ -110,6 +112,7 @@ function rowToJob(row: Record<string, unknown>): TrainJob {
     input: JSON.parse(row['input_json'] as string),
     preprocessOptions: JSON.parse(row['preprocess_json'] as string),
     params: JSON.parse(row['params_json'] as string),
+    manifest: dbGetWorkflowManifest(id) ?? undefined,
     errorMessage: (row['error_message'] as string | null) ?? undefined,
     retryCount: row['retry_count'] as number,
     snapshotId: (row['snapshot_id'] as string | null) ?? undefined,
@@ -118,6 +121,21 @@ function rowToJob(row: Record<string, unknown>): TrainJob {
     startedAt: (row['started_at'] as string | null) ?? undefined,
     completedAt: (row['completed_at'] as string | null) ?? undefined,
   };
+}
+
+export function dbUpsertWorkflowManifest(manifest: WorkflowManifest): void {
+  getDb().prepare(`
+    INSERT INTO workflow_manifests (job_id, manifest_json, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(job_id) DO UPDATE SET
+      manifest_json = excluded.manifest_json,
+      updated_at = excluded.updated_at
+  `).run(manifest.jobId, JSON.stringify(manifest), manifest.updatedAt);
+}
+
+export function dbGetWorkflowManifest(jobId: string): WorkflowManifest | null {
+  const row = getDb().prepare('SELECT manifest_json FROM workflow_manifests WHERE job_id = ?').get(jobId) as Record<string, unknown> | undefined;
+  return row ? JSON.parse(row['manifest_json'] as string) as WorkflowManifest : null;
 }
 
 // ─── Log helpers ─────────────────────────────────────────────────────────────

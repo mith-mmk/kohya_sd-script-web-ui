@@ -169,13 +169,14 @@ def generate_dataset_toml(config: dict[str, Any]) -> str:
 
     work_dir = config["workDir"]
     model_type = config.get("modelType", "sdxl")
+    params = config.get("params", {}) or {}
     resolution = _DEFAULT_RESOLUTION.get(model_type, 1024)
     toml_path = os.path.join(work_dir, "dataset.toml")
 
     lines = [
         "[[datasets]]",
         f"resolution = {resolution}",
-        "batch_size = 1",
+        f"batch_size = {max(1, int(params.get('batchSize') or 1))}",
     ]
     for subset in dataset_subsets:
         materialized_count = _materialize_training_captions(config, subset)
@@ -214,19 +215,23 @@ def main() -> None:
     sd_dir: str = config["sdScriptsDir"]
 
     # ── Phase 1: Preprocessing ────────────────────────────────────────────────
-    info(f"[phase:preprocess] Starting preprocessing for job {job_id}")
-    try:
-        ok = run_preprocessing(config)
-    except Exception as exc:
-        error(f"[phase:preprocess] Unexpected error: {exc}")
-        exit_event(1, str(exc))
-        sys.exit(1)
+    resume_from_step = config.get("resumeFromStep")
+    if config.get("resume") and resume_from_step == "train":
+        info("[phase:preprocess] Skipping preprocessing for training resume")
+    else:
+        info(f"[phase:preprocess] Starting preprocessing for job {job_id}")
+        try:
+            ok = run_preprocessing(config)
+        except Exception as exc:
+            error(f"[phase:preprocess] Unexpected error: {exc}")
+            exit_event(1, str(exc))
+            sys.exit(1)
 
-    if not ok:
-        exit_event(1, "Preprocessing failed")
-        sys.exit(1)
+        if not ok:
+            exit_event(1, "Preprocessing failed")
+            sys.exit(1)
 
-    info("[phase:preprocess] Preprocessing complete")
+        info("[phase:preprocess] Preprocessing complete")
 
     # ── Phase 2: Training ─────────────────────────────────────────────────────
     info("[phase:train] Building training command")

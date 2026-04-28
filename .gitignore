@@ -22,6 +22,9 @@ build/
 # Runtime data
 data/
 work/
+.test*/
+.test*
+test_data/
 *.db
 *.db-shm
 *.db-wal

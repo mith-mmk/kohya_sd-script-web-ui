@@ -49,6 +49,13 @@ CREATE TABLE IF NOT EXISTS dataset_snapshots (
   FOREIGN KEY (job_id) REFERENCES jobs(id)
 );
 
+CREATE TABLE IF NOT EXISTS workflow_manifests (
+  job_id        TEXT PRIMARY KEY,
+  manifest_json TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  FOREIGN KEY (job_id) REFERENCES jobs(id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_job_logs_job_id ON job_logs(job_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 `;

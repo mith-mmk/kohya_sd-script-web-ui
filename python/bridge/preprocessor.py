@@ -88,7 +88,13 @@ def _get_effective_subset_dir(
 ) -> str:
     if opts.get("runResize", False):
         return os.path.join(work_dir, "resized", subset["workKey"])
+    if opts.get("normalizeImages", True):
+        return os.path.join(work_dir, "normalized", subset["workKey"])
     return os.path.join(work_dir, "prepared", subset["workKey"])
+
+
+def _get_normalized_subset_dir(work_dir: str, subset: dict[str, Any]) -> str:
+    return os.path.join(work_dir, "normalized", subset["workKey"])
 
 
 def _get_shared_work_dir(work_dir: str) -> str:
@@ -148,6 +154,42 @@ def _prepare_effective_subset_dir(src_dir: str, dst_dir: str) -> int:
         copied_files += 1
 
     return copied_files
+
+
+def _normalize_subset_images(src_dir: str, dst_dir: str, normalized_format: str) -> int:
+    src_root = Path(src_dir)
+    dst_root = Path(dst_dir)
+    dst_root.mkdir(parents=True, exist_ok=True)
+    normalized_count = 0
+    normalized_format = normalized_format.lower().strip()
+
+    if normalized_format == "copy":
+        return _prepare_effective_subset_dir(src_dir, dst_dir)
+
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise RuntimeError("Image normalization to png/jpg/webp requires Pillow") from exc
+
+    extension = ".jpg" if normalized_format == "jpeg" else f".{normalized_format}"
+    if extension not in {".png", ".jpg", ".webp"}:
+        raise ValueError(f"Unsupported normalized image format: {normalized_format}")
+
+    for src_path in _iter_files(src_dir):
+        rel_path = src_path.relative_to(src_root)
+        dst_path = dst_root / rel_path
+        if src_path.suffix.lower() in _IMAGE_EXTENSIONS:
+            dst_path = dst_path.with_suffix(extension)
+            dst_path.parent.mkdir(parents=True, exist_ok=True)
+            with Image.open(src_path) as image:
+                if extension == ".jpg" and image.mode in {"RGBA", "P"}:
+                    image = image.convert("RGB")
+                image.save(dst_path)
+        else:
+            _link_or_copy_file(src_path, dst_path)
+        normalized_count += 1
+
+    return normalized_count
 
 
 def _read_sidecar_text(sidecar_path: Path) -> str | None:
@@ -224,6 +266,7 @@ def run_preprocessing(config: dict[str, Any]) -> bool:
 
     steps = []
     skip_preprocessing = opts.get("skipPreprocessing", False)
+    run_normalize = opts.get("normalizeImages", True) and not skip_preprocessing
     run_resize = opts.get("runResize", False) and not skip_preprocessing
     run_wd14 = opts.get("runWd14Tagger", True) and not skip_preprocessing
     captioning = opts.get("runCaptioning", "none") if not skip_preprocessing else "none"
@@ -243,17 +286,35 @@ def run_preprocessing(config: dict[str, Any]) -> bool:
         )
         return False
 
-    # Step 1: Resize images
+    # Step 1: Normalize images before any tagger/caption step.
+    if run_normalize:
+        for subset in dataset_subsets:
+            normalized_dir = _get_normalized_subset_dir(work_dir, subset)
+            try:
+                normalized_files = _normalize_subset_images(
+                    subset["imageDir"],
+                    normalized_dir,
+                    str(opts.get("normalizedFormat") or "copy"),
+                )
+            except Exception as exc:
+                error(f"[preprocess] Image normalization failed for {subset['label']}: {exc}")
+                return False
+            info(
+                f"[preprocess] Normalized images: {subset['label']} -> {normalized_dir} ({normalized_files} files)"
+            )
+
+    # Step 2: Resize images
     if run_resize:
         for subset in dataset_subsets:
             out_dir = os.path.join(work_dir, "resized", subset["workKey"])
+            resize_src = _get_normalized_subset_dir(work_dir, subset) if run_normalize else subset["imageDir"]
             steps.append(
                 (
                     f"resize:{subset['label']}",
-                    _resize_step(python, sd_dir, subset["imageDir"], out_dir, opts),
+                    _resize_step(python, sd_dir, resize_src, out_dir, opts),
                 )
             )
-    else:
+    elif not run_normalize:
         for subset in dataset_subsets:
             effective_dir = _get_effective_subset_dir(work_dir, subset, opts)
             copied_files = _prepare_effective_subset_dir(

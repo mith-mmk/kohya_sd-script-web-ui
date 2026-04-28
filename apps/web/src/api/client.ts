@@ -1,4 +1,4 @@
-import type { TrainJob, TrainJobInput, PreprocessOptions, LoRAProfile, LogEvent, PromptListResponse } from '../types/job.js';
+import type { TrainJob, TrainJobInput, PreprocessOptions, LoRAProfile, LogEvent, PromptListResponse, AdvancedSettingsProfile } from '../types/job.js';
 
 const BASE = '/api';
 
@@ -36,6 +36,7 @@ export const api = {
   getLogs: (id: string, since?: number) =>
     req<LogEvent[]>(`${BASE}/jobs/${id}/logs${since ? `?since=${since}` : ''}`),
   listProfiles: () => req<LoRAProfile[]>(`${BASE}/profiles`),
+  listAdvancedProfiles: () => req<AdvancedSettingsProfile[]>(`${BASE}/advanced-profiles`),
 };
 
 /** Subscribe to live log stream via WebSocket. Returns unsubscribe fn. */
