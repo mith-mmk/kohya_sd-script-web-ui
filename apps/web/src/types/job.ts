@@ -31,6 +31,7 @@ export interface TrainParams {
   saveEveryNEpochs?: number;
   saveEveryNSteps?: number;
   saveLastNEpochs?: number;
+  saveLastNSteps?: number;
   saveState: boolean;
   saveModelAs: 'safetensors' | 'ckpt';
   clipL?: string;

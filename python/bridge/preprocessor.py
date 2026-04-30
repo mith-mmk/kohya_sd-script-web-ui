@@ -22,6 +22,14 @@ _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".avif"}
 _RAW_CAPTION_EXTENSION = ".caption"
 _RAW_TAG_EXTENSION = ".wd14.txt"
 _EDITABLE_PROMPT_EXTENSION = ".prompt.txt"
+_TEXT_SIDECAR_SUFFIXES = (
+    ".txt",
+    ".caption",
+    ".wd14.txt",
+    ".prompt.txt",
+    ".train.txt",
+)
+_TEXT_DECODE_ENCODINGS = ("utf-8-sig", "utf-8", "cp932")
 _RELATIVE_DATASET_PATH_ERROR = (
     "Dataset subset directory must be an absolute path: {path}. "
     "The browser folder picker may have returned only the folder name. "
@@ -136,10 +144,34 @@ def _link_or_copy_file(src: Path, dst: Path) -> None:
     if dst.exists():
         return
 
+    if _is_text_sidecar(src):
+        _copy_text_sidecar_as_utf8(src, dst)
+        return
+
     try:
         os.link(src, dst)
     except OSError:
         shutil.copy2(src, dst)
+
+
+def _is_text_sidecar(path: Path) -> bool:
+    lower_name = path.name.lower()
+    return any(lower_name.endswith(suffix) for suffix in _TEXT_SIDECAR_SUFFIXES)
+
+
+def _read_text_sidecar_bytes(src: Path) -> tuple[str, str]:
+    data = src.read_bytes()
+    for encoding in _TEXT_DECODE_ENCODINGS:
+        try:
+            return data.decode(encoding), encoding
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace"), "utf-8-replace"
+
+
+def _copy_text_sidecar_as_utf8(src: Path, dst: Path) -> None:
+    text, _encoding = _read_text_sidecar_bytes(src)
+    dst.write_text(text, encoding="utf-8", newline="")
 
 
 def _prepare_effective_subset_dir(src_dir: str, dst_dir: str) -> int:
@@ -188,6 +220,8 @@ def _normalize_subset_images(src_dir: str, dst_dir: str, normalized_format: str)
                 image.save(dst_path)
         else:
             _link_or_copy_file(src_path, dst_path)
+        if _is_text_sidecar(dst_path):
+            continue
         if dst_path.suffix.lower() in _IMAGE_EXTENSIONS:
             normalized_count += 1
 
@@ -197,7 +231,8 @@ def _normalize_subset_images(src_dir: str, dst_dir: str, normalized_format: str)
 def _read_sidecar_text(sidecar_path: Path) -> str | None:
     if not sidecar_path.is_file():
         return None
-    return sidecar_path.read_text(encoding="utf-8", errors="replace").strip()
+    text, _encoding = _read_text_sidecar_bytes(sidecar_path)
+    return text.strip()
 
 
 def _materialize_editable_prompts(effective_dir: str, editable_extension: str) -> int:

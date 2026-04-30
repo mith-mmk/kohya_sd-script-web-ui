@@ -42,6 +42,7 @@ export interface TrainParams {
   saveEveryNEpochs?: number;
   saveEveryNSteps?: number;
   saveLastNEpochs?: number;
+  saveLastNSteps?: number;
   saveState: boolean;
   saveModelAs: 'safetensors' | 'ckpt';
   // Flux-specific
@@ -246,7 +247,9 @@ export const DEFAULT_PROFILES: LoRAProfile[] = [
       cacheLatents: true,
       cacheLatentsToDisk: false,
       saveEveryNEpochs: 2,
+      saveEveryNSteps: 500,
       saveLastNEpochs: 3,
+      saveLastNSteps: 1500,
       saveState: true,
       saveModelAs: 'safetensors',
     },
@@ -271,7 +274,9 @@ export const DEFAULT_PROFILES: LoRAProfile[] = [
       cacheLatents: true,
       cacheLatentsToDisk: true,
       saveEveryNEpochs: 2,
+      saveEveryNSteps: 500,
       saveLastNEpochs: 3,
+      saveLastNSteps: 1500,
       saveState: true,
       saveModelAs: 'safetensors',
     },
@@ -294,7 +299,9 @@ export const DEFAULT_PROFILES: LoRAProfile[] = [
       cacheLatents: true,
       cacheLatentsToDisk: true,
       saveEveryNEpochs: 4,
+      saveEveryNSteps: 500,
       saveLastNEpochs: 2,
+      saveLastNSteps: 1500,
       saveState: true,
       saveModelAs: 'safetensors',
     },
@@ -317,7 +324,9 @@ export const DEFAULT_PROFILES: LoRAProfile[] = [
       cacheLatents: true,
       cacheLatentsToDisk: true,
       saveEveryNEpochs: 2,
+      saveEveryNSteps: 500,
       saveLastNEpochs: 3,
+      saveLastNSteps: 1500,
       saveState: true,
       saveModelAs: 'safetensors',
     },

@@ -34,6 +34,11 @@ const MODEL_PATH_LABELS: Partial<Record<keyof TrainParams, string>> = {
 };
 
 type LogListener = (event: LogEvent) => void;
+type StateDirInfo = {
+  path: string;
+  currentStep: number;
+  mtimeMs: number;
+};
 const WORKFLOW_STEPS: Array<{ id: WorkflowStepId; name: string }> = [
   { id: 'image-normalize', name: 'Image normalization' },
   { id: 'resize', name: 'Resize/crop' },
@@ -153,6 +158,12 @@ class JobQueue {
       retryTier: retryConfig?.tier ?? null,
       pauseBeforeTraining: Boolean(normalizedInput.pauseBeforeTraining) && !retryConfig?.skipPause,
     };
+    if (bridgeConfig.resume) {
+      dbUpdateJob(jobId, { stateDir: bridgeConfig.resume });
+      this.sysLog(jobId, 'info', `Resuming sd-scripts state: ${bridgeConfig.resume}`);
+    } else if (retryConfig?.resumeFromStep === 'train') {
+      this.sysLog(jobId, 'warn', 'No sd-scripts state snapshot was found; training will start without --resume.');
+    }
     fs.writeFileSync(configPath, JSON.stringify(bridgeConfig, null, 2), 'utf-8');
     this.updateManifestStep(jobId, retryConfig?.resumeFromStep ?? 'image-normalize', 'running');
 
@@ -274,12 +285,58 @@ class JobQueue {
   private discoverStateDirs(job: TrainJob): string[] {
     const outDir = job.input.outputDir;
     if (!fs.existsSync(outDir)) return [];
-    const entries = fs.readdirSync(outDir, { withFileTypes: true });
-    const pattern = /^.+-\d{6}-state$|^.+-step\d{8}-state$/;
-    return entries
-      .filter(e => e.isDirectory() && pattern.test(e.name))
-      .map(e => path.join(outDir, e.name))
-      .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+    const outputName = job.input.outputName.trim();
+    const stateDirs = fs.readdirSync(outDir, { withFileTypes: true })
+      .filter(entry => entry.isDirectory())
+      .map(entry => this.getStateDirInfo(outDir, entry.name, outputName))
+      .filter((info): info is StateDirInfo => info !== null)
+      .sort((left, right) => {
+        if (left.currentStep !== right.currentStep) return right.currentStep - left.currentStep;
+        return right.mtimeMs - left.mtimeMs;
+      });
+
+    return stateDirs.map(info => info.path);
+  }
+
+  private getStateDirInfo(outDir: string, name: string, outputName: string): StateDirInfo | null {
+    if (!this.isStateDirName(name, outputName)) return null;
+
+    const stateDir = path.join(outDir, name);
+    const stats = fs.statSync(stateDir);
+    if (!stats.isDirectory()) return null;
+
+    return {
+      path: stateDir,
+      currentStep: this.readStateCurrentStep(stateDir) ?? this.parseStateStepFromName(name),
+      mtimeMs: stats.mtimeMs,
+    };
+  }
+
+  private isStateDirName(name: string, outputName: string): boolean {
+    if (outputName && name === `${outputName}-state`) return true;
+    if (outputName && name.startsWith(`${outputName}-`) && /^.+-\d{6}-state$/.test(name)) return true;
+    if (outputName && name.startsWith(`${outputName}-step`) && /^.+-step\d{8}-state$/.test(name)) return true;
+    return /^.+-\d{6}-state$|^.+-step\d{8}-state$/.test(name);
+  }
+
+  private parseStateStepFromName(name: string): number {
+    const stepMatch = /-step(\d{8})-state$/.exec(name);
+    if (stepMatch) return Number(stepMatch[1]);
+    const epochMatch = /-(\d{6})-state$/.exec(name);
+    if (epochMatch) return Number(epochMatch[1]);
+    return 0;
+  }
+
+  private readStateCurrentStep(stateDir: string): number | null {
+    const statePath = path.join(stateDir, 'train_state.json');
+    if (!fs.existsSync(statePath)) return null;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as { current_step?: unknown };
+      const currentStep = Number(parsed.current_step);
+      return Number.isFinite(currentStep) ? currentStep : null;
+    } catch {
+      return null;
+    }
   }
 
   // ─── Stop job ───────────────────────────────────────────────────────────────
@@ -547,7 +604,8 @@ function getDefaultParams(modelType: string): TrainParams {
     batchSize: 2, maxTrainEpochs: 10, optimizerType: 'AdamW8bit',
     lrScheduler: 'cosine_with_restarts', mixedPrecision: 'fp16',
     gradientCheckpointing: true, cacheLatents: true, cacheLatentsToDisk: false,
-    saveEveryNEpochs: 2, saveLastNEpochs: 3, saveState: true, saveModelAs: 'safetensors',
+    saveEveryNEpochs: 2, saveEveryNSteps: 500, saveLastNEpochs: 3, saveLastNSteps: 1500,
+    saveState: true, saveModelAs: 'safetensors',
   };
   if (modelType === 'sdxl') return { ...base, networkDim: 64, networkAlpha: 32, mixedPrecision: 'bf16', cacheLatentsToDisk: true };
   if (modelType === 'flux') return { ...base, networkDim: 16, networkAlpha: 8, batchSize: 1, mixedPrecision: 'bf16', cacheLatentsToDisk: true };

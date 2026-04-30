@@ -117,6 +117,7 @@ def build_train_command(config: dict[str, Any], sd_scripts_dir: str) -> list[str
     _opt(cmd, "--save_every_n_epochs", params.get("saveEveryNEpochs"))
     _opt(cmd, "--save_every_n_steps", params.get("saveEveryNSteps"))
     _opt(cmd, "--save_last_n_epochs", params.get("saveLastNEpochs"))
+    _opt(cmd, "--save_last_n_steps", params.get("saveLastNSteps"))
     _flag(cmd, "--save_state", params.get("saveState", True))
     _flag(cmd, "--save_state_on_train_end", True)
 
