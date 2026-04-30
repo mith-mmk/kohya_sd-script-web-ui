@@ -73,6 +73,14 @@ export function dbUpdateJob(id: string, fields: Partial<TrainJob>): void {
     updates.push('params_json = ?');
     values.push(JSON.stringify(fields.params));
   }
+  if (fields.input) {
+    updates.push('input_json = ?');
+    values.push(JSON.stringify(fields.input));
+  }
+  if (fields.preprocessOptions) {
+    updates.push('preprocess_json = ?');
+    values.push(JSON.stringify(fields.preprocessOptions));
+  }
 
   values.push(id);
   db.prepare(`UPDATE jobs SET ${updates.join(', ')} WHERE id = ?`).run(...values);

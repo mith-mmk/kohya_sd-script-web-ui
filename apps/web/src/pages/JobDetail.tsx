@@ -3,20 +3,20 @@ import { useParams, Link } from 'react-router-dom';
 import { api, subscribeJobLogs } from '../api/client.js';
 import Console from '../components/Console.js';
 import TagEditor from '../components/TagEditor.js';
-import type { TrainJob, LogEvent, JobStatus } from '../types/job.js';
+import type { TrainJob, LogEvent, JobStatus, TrainParams } from '../types/job.js';
 import { useT } from '../i18n/LangContext.js';
 
 const STATUS_COLOR: Record<JobStatus, string> = {
-  queued: '#888', running: '#4ade80', paused: '#fbbf24', failed: '#f87171',
+  queued: 'var(--faint)', running: '#15803d', paused: '#b7791f', failed: 'var(--danger-text)',
   completed: '#818cf8', resumable: '#fb923c',
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const S: Record<string, any> = {
-  back: { color: '#666', textDecoration: 'none', fontSize: 13, marginBottom: 16, display: 'inline-block' },
+  back: { color: 'var(--faint)', textDecoration: 'none', fontSize: 13, marginBottom: 16, display: 'inline-block' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 },
   title: { fontSize: 20, fontWeight: 700 },
-  meta: { fontSize: 12, color: '#666', marginTop: 4 },
+  meta: { fontSize: 12, color: 'var(--faint)', marginTop: 4 },
   badge: (s: JobStatus): React.CSSProperties => ({
     background: STATUS_COLOR[s] + '22', color: STATUS_COLOR[s],
     borderRadius: 4, padding: '3px 10px', fontSize: 13, fontWeight: 600,
@@ -26,18 +26,20 @@ const S: Record<string, any> = {
     background: color, color: '#fff', border: 'none', borderRadius: 6,
     padding: '7px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 600,
   }),
+  input: { background: 'var(--panel-muted)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', padding: '7px 10px', fontSize: 13, width: '100%' },
+  select: { background: 'var(--panel-muted)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', padding: '7px 10px', fontSize: 13, width: '100%' },
   grid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 },
-  card: { background: '#1a1a1a', borderRadius: 8, padding: '14px 18px', border: '1px solid #2a2a2a' },
-  cardTitle: { fontSize: 11, color: '#666', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 },
+  card: { background: 'var(--panel)', borderRadius: 8, padding: '14px 18px', border: '1px solid var(--border)' },
+  cardTitle: { fontSize: 11, color: 'var(--faint)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 },
   kv: { display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6 },
-  key: { color: '#888' },
-  val: { color: '#e0e0e0', textAlign: 'right', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  key: { color: 'var(--muted)' },
+  val: { color: 'var(--text)', textAlign: 'right', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   tabs: { display: 'flex', gap: 2, marginBottom: 16 },
   tab: (active: boolean): React.CSSProperties => ({
     padding: '6px 16px', fontSize: 13, borderRadius: '6px 6px 0 0', cursor: 'pointer', border: 'none',
-    background: active ? '#2a2a2a' : '#1a1a1a', color: active ? '#a78bfa' : '#666', fontWeight: active ? 600 : 400,
+    background: active ? 'var(--panel-muted)' : 'var(--panel)', color: active ? 'var(--accent-soft)' : 'var(--faint)', fontWeight: active ? 600 : 400,
   }),
-  error: { background: '#3b0404', border: '1px solid #7f1d1d', borderRadius: 6, padding: '10px 14px', color: '#fca5a5', fontSize: 13, marginBottom: 16 },
+  error: { background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', borderRadius: 6, padding: '10px 14px', color: 'var(--danger-text)', fontSize: 13, marginBottom: 16 },
 };
 
 type Tab = 'console' | 'params' | 'steps' | 'tags';
@@ -77,7 +79,7 @@ export default function JobDetail() {
   };
 
   const { t } = useT();
-  if (!job) return <div style={{ color: '#666', padding: 40 }}>{t.loading}</div>;
+  if (!job) return <div style={{ color: 'var(--faint)', padding: 40 }}>{t.loading}</div>;
 
   const datasetDirs = job.input.datasetSubsets?.map(subset => subset.imageDir).filter(Boolean)
     ?? (job.input.datasetDir ? [job.input.datasetDir] : []);
@@ -101,6 +103,9 @@ export default function JobDetail() {
             )}
             {job.status === 'running' && (
               <button style={S.btn('#b45309')} onClick={() => act(() => api.stopJob(job.id))}>{t.btnStop}</button>
+            )}
+            {job.status === 'paused' && (
+              <button style={S.btn('#16a34a')} onClick={() => act(() => api.continueJob(job.id))}>学習を続行</button>
             )}
             {(job.status === 'failed' || job.status === 'resumable') && (
               <button style={S.btn('#7c3aed')} onClick={() => act(() => api.resumeJob(job.id))}>
@@ -152,7 +157,7 @@ export default function JobDetail() {
       </div>
 
       {tab === 'console' && <Console events={logs} />}
-      {tab === 'params' && <ParamsView params={job.params} />}
+      {tab === 'params' && <ParamsView job={job} onSaved={setJob} />}
       {tab === 'steps' && <StepsView job={job} />}
       {tab === 'tags' && <TagEditor jobId={job.id} jobStatus={job.status} />}
     </div>
@@ -177,10 +182,10 @@ function StepsView({ job }: { job: TrainJob }) {
         <div style={S.error}>Resume will start from: {job.manifest.resumeFromStep}</div>
       )}
       {steps.map(step => (
-        <div key={step.id} style={{ display: 'grid', gridTemplateColumns: '180px 120px 1fr', gap: 12, alignItems: 'center', borderBottom: '1px solid #222', paddingBottom: 8 }}>
-          <div style={{ color: '#e0e0e0', fontWeight: 600 }}>{step.name}</div>
-          <div style={{ color: step.status === 'failed' ? '#f87171' : step.status === 'completed' ? '#4ade80' : '#888' }}>{step.status}</div>
-          <div style={{ color: '#888', fontSize: 12 }}>
+        <div key={step.id} style={{ display: 'grid', gridTemplateColumns: '180px 120px 1fr', gap: 12, alignItems: 'center', borderBottom: '1px solid var(--border)', paddingBottom: 8 }}>
+          <div style={{ color: 'var(--text)', fontWeight: 600 }}>{step.name}</div>
+          <div style={{ color: step.status === 'failed' ? 'var(--danger-text)' : step.status === 'completed' ? '#15803d' : 'var(--muted)' }}>{step.status}</div>
+          <div style={{ color: 'var(--muted)', fontSize: 12 }}>
             {step.error ?? step.outputs.map(output => output.path).join(', ') ?? ''}
           </div>
         </div>
@@ -189,17 +194,83 @@ function StepsView({ job }: { job: TrainJob }) {
   );
 }
 
-function ParamsView({ params }: { params: TrainJob['params'] }) {
+function parseParamValue(key: keyof TrainParams, value: string, original: TrainParams[keyof TrainParams]): TrainParams[keyof TrainParams] | undefined {
+  if (value.trim() === '') return undefined;
+  if (typeof original === 'number') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  if (typeof original === 'boolean') return value === 'true';
+  return value;
+}
+
+function ParamsView({ job, onSaved }: { job: TrainJob; onSaved: (job: TrainJob) => void }) {
+  const [draft, setDraft] = useState<Record<string, string>>(() => Object.fromEntries(
+    Object.entries(job.params).map(([key, value]) => [key, String(value)]),
+  ));
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const editable = job.status !== 'running' && job.status !== 'completed';
+
+  useEffect(() => {
+    setDraft(Object.fromEntries(Object.entries(job.params).map(([key, value]) => [key, String(value)])));
+  }, [job.params]);
+
+  const save = async () => {
+    setSaving(true);
+    setMessage('');
+    try {
+      const params = Object.fromEntries(
+        Object.entries(draft)
+          .map(([key, value]) => [key, parseParamValue(key as keyof TrainParams, value, job.params[key as keyof TrainParams])])
+          .filter(([, value]) => value !== undefined),
+      ) as Partial<TrainParams>;
+      const savedJob = await api.updateJobParams(job.id, params);
+      onSaved(savedJob);
+      setMessage('保存しました。');
+    } catch (err) {
+      setMessage(String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <div style={{ background: '#1a1a1a', borderRadius: 8, padding: '16px 20px', border: '1px solid #2a2a2a' }}>
+    <div style={{ background: 'var(--panel)', borderRadius: 8, padding: '16px 20px', border: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div style={S.cardTitle}>Training parameters</div>
+        <button style={S.btn(editable ? '#2563eb' : 'var(--faint)')} disabled={!editable || saving} onClick={save}>
+          {saving ? '保存中…' : '保存'}
+        </button>
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 24px' }}>
-        {Object.entries(params).map(([k, v]) => (
-          <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 0', borderBottom: '1px solid #222' }}>
-            <span style={{ color: '#888' }}>{k}</span>
-            <span style={{ color: '#e0e0e0' }}>{String(v)}</span>
+        {Object.entries(job.params).map(([k, v]) => (
+          <div key={k} style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1fr) minmax(120px, 1fr)', gap: 8, alignItems: 'center', fontSize: 13, padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
+            <span style={{ color: 'var(--muted)' }}>{k}</span>
+            {typeof v === 'boolean' ? (
+              <select
+                style={{ ...S.select, marginBottom: 0 }}
+                disabled={!editable}
+                value={draft[k] ?? String(v)}
+                onChange={event => setDraft(current => ({ ...current, [k]: event.target.value }))}
+              >
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            ) : (
+              <input
+                style={S.input}
+                disabled={!editable}
+                type={typeof v === 'number' ? 'number' : 'text'}
+                value={draft[k] ?? String(v)}
+                onChange={event => setDraft(current => ({ ...current, [k]: event.target.value }))}
+              />
+            )}
           </div>
         ))}
       </div>
+      {message && <div style={{ ...S.meta, marginTop: 12 }}>{message}</div>}
     </div>
   );
 }
+

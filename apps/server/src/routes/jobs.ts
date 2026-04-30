@@ -2,12 +2,21 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { jobQueue } from '../queue/JobQueue.js';
-import type { TrainJob, TrainJobInput, PreprocessOptions } from '../types/job.js';
+import type { TrainJob, TrainJobInput, PreprocessOptions, TrainParams } from '../types/job.js';
 import { ADVANCED_SETTINGS_PROFILES } from '../types/job.js';
 import { dbGetLogs, dbListProfiles } from '../db/client.js';
 
 const MANAGED_PROMPT_EXTENSION = '.prompt.txt';
 const TRAINING_PROMPT_EXTENSION = '.train.txt';
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.avif'] as const;
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+  '.avif': 'image/avif',
+};
 
 interface PromptSubsetRef {
   workKey: string;
@@ -18,6 +27,7 @@ interface PromptSubsetRef {
 interface PromptFileEntry {
   id: string;
   relativePath: string;
+  imageRelativePath?: string;
   baseName: string;
   updatedAt: string;
   size: number;
@@ -74,6 +84,8 @@ function resolvePromptSubsets(input: TrainJobInput): PromptSubsetRef[] {
 function resolveEffectiveSubsetDir(job: TrainJob, subset: PromptSubsetRef): string {
   const rootDir = job.preprocessOptions.runResize && !job.preprocessOptions.skipPreprocessing
     ? 'resized'
+    : job.preprocessOptions.normalizeImages && !job.preprocessOptions.skipPreprocessing
+      ? 'normalized'
     : 'prepared';
   return path.join(job.workDir, rootDir, subset.workKey);
 }
@@ -85,6 +97,18 @@ function isWithinDir(rootDir: string, candidatePath: string): boolean {
 
 async function listPromptFiles(rootDir: string): Promise<PromptFileEntry[]> {
   const items: PromptFileEntry[] = [];
+
+  async function findImageRelativePath(promptRelativePath: string): Promise<string | undefined> {
+    const stem = promptRelativePath.slice(0, -MANAGED_PROMPT_EXTENSION.length);
+    for (const extension of IMAGE_EXTENSIONS) {
+      const candidateRelativePath = `${stem}${extension}`;
+      const candidatePath = path.resolve(rootDir, candidateRelativePath);
+      if (!isWithinDir(rootDir, candidatePath)) continue;
+      const stats = await fs.stat(candidatePath).catch(() => null);
+      if (stats?.isFile()) return candidateRelativePath.replaceAll('\\', '/');
+    }
+    return undefined;
+  }
 
   async function walk(dirPath: string): Promise<void> {
     const entries = await fs.readdir(dirPath, { withFileTypes: true });
@@ -101,6 +125,7 @@ async function listPromptFiles(rootDir: string): Promise<PromptFileEntry[]> {
       items.push({
         id: relativePath,
         relativePath,
+        imageRelativePath: await findImageRelativePath(relativePath),
         baseName: path.basename(relativePath, MANAGED_PROMPT_EXTENSION),
         updatedAt: stats.mtime.toISOString(),
         size: stats.size,
@@ -129,6 +154,20 @@ function resolveManagedPromptPath(job: TrainJob, subset: PromptSubsetRef, relati
     throw new Error('Prompt path is outside of the managed dataset directory');
   }
   return promptPath;
+}
+
+function resolveManagedImagePath(job: TrainJob, subset: PromptSubsetRef, relativePath: string): string {
+  const effectiveDir = resolveEffectiveSubsetDir(job, subset);
+  const normalizedRelativePath = path.normalize(relativePath).replace(/^([./\\])+/, '');
+  const imagePath = path.resolve(effectiveDir, normalizedRelativePath);
+  const extension = path.extname(imagePath).toLowerCase();
+  if (!IMAGE_EXTENSIONS.includes(extension as (typeof IMAGE_EXTENSIONS)[number])) {
+    throw new Error('Only managed dataset images can be previewed');
+  }
+  if (!isWithinDir(effectiveDir, imagePath)) {
+    throw new Error('Image path is outside of the managed dataset directory');
+  }
+  return imagePath;
 }
 
 export async function jobRoutes(app: FastifyInstance): Promise<void> {
@@ -195,6 +234,27 @@ export async function jobRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  app.post<{ Params: { id: string } }>('/api/jobs/:id/continue', async (req, reply) => {
+    try {
+      await jobQueue.continueJob(req.params.id);
+      return { ok: true };
+    } catch (err) {
+      reply.status(400).send({ error: String(err) });
+    }
+  });
+
+  app.patch<{
+    Params: { id: string };
+    Body: { params?: Record<string, unknown> };
+  }>('/api/jobs/:id/params', async (req, reply) => {
+    try {
+      const job = jobQueue.updateParams(req.params.id, (req.body.params ?? {}) as Partial<TrainParams>);
+      return job;
+    } catch (err) {
+      reply.status(400).send({ error: String(err) });
+    }
+  });
+
   // Update dataset for fine-tune loop
   app.patch<{
     Params: { id: string };
@@ -245,6 +305,27 @@ export async function jobRoutes(app: FastifyInstance): Promise<void> {
       const stats = await fs.stat(promptPath);
       const content = await fs.readFile(promptPath, 'utf-8');
       return { content, updatedAt: stats.mtime.toISOString() };
+    } catch (error) {
+      return reply.status(400).send({ error: String(error) });
+    }
+  });
+
+  app.get<{
+    Params: { id: string };
+    Querystring: { subset: string; path: string };
+  }>('/api/jobs/:id/prompts/image', async (req, reply) => {
+    const job = jobQueue.get(req.params.id);
+    if (!job) return reply.status(404).send({ error: 'Not found' });
+
+    try {
+      const subset = getPromptSubset(job, req.query.subset);
+      const imagePath = resolveManagedImagePath(job, subset, req.query.path);
+      const stats = await fs.stat(imagePath);
+      if (!stats.isFile()) return reply.status(404).send({ error: 'Image not found' });
+      const extension = path.extname(imagePath).toLowerCase();
+      reply.header('Cache-Control', 'no-store');
+      reply.type(IMAGE_MIME_TYPES[extension] ?? 'application/octet-stream');
+      return reply.send(await fs.readFile(imagePath));
     } catch (error) {
       return reply.status(400).send({ error: String(error) });
     }

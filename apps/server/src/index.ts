@@ -16,6 +16,14 @@ const app = Fastify({
   // Allow POST routes that send no body (e.g. /start, /stop, /resume)
   ajv: { customOptions: { allowUnionTypes: true } },
 });
+app.setErrorHandler((error, req, reply) => {
+  req.log.error(error);
+  const err = error as Error & { code?: string };
+  reply.status(500).send({
+    error: err.message,
+    code: err.code,
+  });
+});
 // Allow empty body on any content-type — prevents FST_ERR_CTP_EMPTY_JSON_BODY
 app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
   if (!body || (body as string).trim() === '') { done(null, {}); return; }
@@ -27,7 +35,7 @@ await app.register(cors, { origin: true });
 await app.register(websocket);
 
 // Serve built web UI (production)
-const webDistDir = path.resolve(__dirname, '../../../web/dist');
+const webDistDir = path.resolve(__dirname, '../../web/dist');
 try {
   await app.register(staticFiles, { root: webDistDir, prefix: '/' });
 } catch { /* web/dist may not exist in dev — Vite handles this */ }

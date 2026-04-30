@@ -5,7 +5,7 @@ import type { TrainJob, JobStatus } from '../types/job.js';
 import { useT } from '../i18n/LangContext.js';
 
 const STATUS_COLOR: Record<JobStatus, string> = {
-  queued: '#888', running: '#4ade80', paused: '#fbbf24', failed: '#f87171',
+  queued: 'var(--faint)', running: '#15803d', paused: '#b7791f', failed: 'var(--danger-text)',
   completed: '#818cf8', resumable: '#fb923c',
 };
 
@@ -13,16 +13,16 @@ const STATUS_COLOR: Record<JobStatus, string> = {
 const S: Record<string, any> = {
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
   h1: { fontSize: 20, fontWeight: 700 },
-  newBtn: { background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 6, padding: '7px 16px', cursor: 'pointer', fontSize: 13 },
+  newBtn: { background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 6, padding: '7px 16px', cursor: 'pointer', fontSize: 13 },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: 13 },
-  th: { textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid #333', color: '#888' },
-  td: { padding: '10px 12px', borderBottom: '1px solid #222' },
+  th: { textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid var(--border)', color: 'var(--muted)' },
+  td: { padding: '10px 12px', borderBottom: '1px solid var(--border)' },
   badge: (status: JobStatus): React.CSSProperties => ({
     background: STATUS_COLOR[status] + '22', color: STATUS_COLOR[status],
     borderRadius: 4, padding: '2px 8px', fontSize: 12, fontWeight: 600,
   }),
-  link: { color: '#a78bfa', textDecoration: 'none' },
-  empty: { textAlign: 'center', padding: 60, color: '#555' },
+  link: { color: 'var(--accent-soft)', textDecoration: 'none' },
+  empty: { textAlign: 'center', padding: 60, color: 'var(--faint)' },
 };
 
 export default function JobList() {

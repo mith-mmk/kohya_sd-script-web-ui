@@ -11,25 +11,28 @@ interface Props {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const S: Record<string, any> = {
   shell: { display: 'grid', gridTemplateColumns: '320px minmax(0, 1fr)', gap: 16 },
-  panel: { background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 8, padding: 16 },
-  sectionTitle: { fontSize: 11, color: '#666', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 },
-  note: { color: '#9ca3af', fontSize: 13, lineHeight: 1.7 },
-  path: { color: '#a78bfa', fontFamily: 'monospace', fontSize: 12, wordBreak: 'break-all' },
-  select: { width: '100%', background: '#111', color: '#e5e7eb', border: '1px solid #333', borderRadius: 6, padding: '8px 10px', marginBottom: 12 },
+  panel: { background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, padding: 16 },
+  editorGrid: { display: 'grid', gridTemplateColumns: 'minmax(240px, 360px) minmax(0, 1fr)', gap: 16, alignItems: 'start' },
+  previewBox: { background: 'var(--panel-muted)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 },
+  previewImage: { width: '100%', maxHeight: 420, objectFit: 'contain', borderRadius: 6, background: '#111', display: 'block' },
+  sectionTitle: { fontSize: 11, color: 'var(--faint)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 },
+  note: { color: 'var(--muted)', fontSize: 13, lineHeight: 1.7 },
+  path: { color: 'var(--accent-soft)', fontFamily: 'monospace', fontSize: 12, wordBreak: 'break-all' },
+  select: { width: '100%', background: 'var(--panel-muted)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px', marginBottom: 12 },
   fileList: { display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 420, overflowY: 'auto' },
   fileButton: (active: boolean): React.CSSProperties => ({
-    width: '100%', textAlign: 'left', border: '1px solid ' + (active ? '#7c3aed' : '#2a2a2a'), background: active ? '#221334' : '#111',
-    color: '#e5e7eb', borderRadius: 8, padding: '10px 12px', cursor: 'pointer',
+    width: '100%', textAlign: 'left', border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`, background: active ? 'color-mix(in srgb, var(--accent) 14%, var(--panel))' : 'var(--panel-muted)',
+    color: 'var(--text)', borderRadius: 8, padding: '10px 12px', cursor: 'pointer',
   }),
   fileName: { fontSize: 13, fontWeight: 600, marginBottom: 4 },
-  fileMeta: { color: '#888', fontSize: 11 },
-  textarea: { width: '100%', minHeight: 360, resize: 'vertical', background: '#111', color: '#f3f4f6', border: '1px solid #333', borderRadius: 8, padding: 14, fontSize: 13, lineHeight: 1.6, fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' },
+  fileMeta: { color: 'var(--faint)', fontSize: 11 },
+  textarea: { width: '100%', minHeight: 360, resize: 'vertical', background: 'var(--panel-muted)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 8, padding: 14, fontSize: 13, lineHeight: 1.6, fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' },
   toolbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12 },
   saveButton: (disabled: boolean): React.CSSProperties => ({
-    background: disabled ? '#3f3f46' : '#2563eb', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 14px', cursor: disabled ? 'not-allowed' : 'pointer', fontWeight: 600,
+    background: disabled ? 'var(--faint)' : 'var(--accent)', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 14px', cursor: disabled ? 'not-allowed' : 'pointer', fontWeight: 600,
   }),
-  status: { color: '#9ca3af', fontSize: 12 },
-  error: { marginTop: 12, background: '#3b0404', border: '1px solid #7f1d1d', color: '#fca5a5', borderRadius: 6, padding: '10px 12px', fontSize: 12 },
+  status: { color: 'var(--muted)', fontSize: 12 },
+  error: { marginTop: 12, background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', color: 'var(--danger-text)', borderRadius: 6, padding: '10px 12px', fontSize: 12 },
 };
 
 function formatDate(value: string): string {
@@ -122,6 +125,9 @@ export default function TagEditor({ jobId, jobStatus }: Props) {
 
   const isDirty = content !== savedContent;
   const selectedItem = selectedSubset?.items.find(item => item.relativePath === selectedPath) ?? null;
+  const selectedImageUrl = selectedSubset && selectedItem?.imageRelativePath
+    ? api.getJobPromptImageUrl(jobId, selectedSubset.workKey, selectedItem.imageRelativePath)
+    : '';
 
   const savePrompt = async () => {
     if (!selectedSubset || !selectedPath || !isDirty || saving || jobStatus === 'running') return;
@@ -197,13 +203,28 @@ export default function TagEditor({ jobId, jobStatus }: Props) {
 
         {!hasPromptFiles && <div style={S.note}>{t.tagEditorEmpty}</div>}
         {hasPromptFiles && (
-          <textarea
-            style={S.textarea}
-            value={content}
-            onChange={event => setContent(event.target.value)}
-            disabled={loadingContent}
-            placeholder={t.tagEditorSelectFile}
-          />
+          <div style={S.editorGrid}>
+            <div style={S.previewBox}>
+              <div style={S.sectionTitle}>Preview</div>
+              {selectedImageUrl ? (
+                <img
+                  key={selectedImageUrl}
+                  src={selectedImageUrl}
+                  alt={selectedItem?.baseName ?? 'preview'}
+                  style={S.previewImage}
+                />
+              ) : (
+                <div style={S.note}>対応する画像が見つかりません。</div>
+              )}
+            </div>
+            <textarea
+              style={S.textarea}
+              value={content}
+              onChange={event => setContent(event.target.value)}
+              disabled={loadingContent}
+              placeholder={t.tagEditorSelectFile}
+            />
+          </div>
         )}
 
         <div style={{ ...S.status, marginTop: 10 }}>

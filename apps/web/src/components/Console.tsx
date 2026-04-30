@@ -8,26 +8,26 @@ interface Props {
 }
 
 const LEVEL_COLOR: Record<string, string> = {
-  info: '#e0e0e0', warn: '#fbbf24', error: '#f87171', progress: '#4ade80',
+  info: 'var(--text)', warn: '#b7791f', error: 'var(--danger-text)', progress: '#15803d',
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const S: Record<string, any> = {
-  wrapper: { background: '#0a0a0a', border: '1px solid #222', borderRadius: 8, overflow: 'hidden' },
-  toolbar: { background: '#111', padding: '6px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #222' },
-  toolbarTitle: { fontSize: 12, color: '#666' },
+  wrapper: { background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' },
+  toolbar: { background: 'var(--panel-muted)', padding: '6px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)' },
+  toolbarTitle: { fontSize: 12, color: 'var(--faint)' },
   log: { height: 380, overflowY: 'auto', fontFamily: 'monospace', fontSize: 12, padding: '10px 14px', lineHeight: 1.6 },
   line: (level: string): React.CSSProperties => ({
-    color: LEVEL_COLOR[level] ?? '#e0e0e0',
+    color: LEVEL_COLOR[level] ?? 'var(--text)',
     whiteSpace: 'pre-wrap', wordBreak: 'break-all',
   }),
-  ts: { color: '#444', marginRight: 8, fontSize: 11 },
-  progress: { height: 3, background: '#1a1a1a', borderRadius: 2, overflow: 'hidden', margin: '0 14px 8px' },
+  ts: { color: 'var(--faint)', marginRight: 8, fontSize: 11 },
+  progress: { height: 3, background: 'var(--panel-muted)', borderRadius: 2, overflow: 'hidden', margin: '0 14px 8px' },
   progressBar: (pct: number): React.CSSProperties => ({
     height: '100%', width: `${pct * 100}%`, background: '#4ade80',
     transition: 'width 0.3s ease',
   }),
-  autoScrollBtn: { fontSize: 11, background: 'none', border: '1px solid #333', color: '#888', borderRadius: 4, padding: '2px 8px', cursor: 'pointer' },
+  autoScrollBtn: { fontSize: 11, background: 'none', border: '1px solid var(--border)', color: 'var(--muted)', borderRadius: 4, padding: '2px 8px', cursor: 'pointer' },
 };
 
 export default function Console({ events, autoScroll: initAutoScroll = true }: Props) {
@@ -61,7 +61,7 @@ export default function Console({ events, autoScroll: initAutoScroll = true }: P
             <span style={S.ts}>{fmt(e.ts)}</span>
             {e.message}
             {e.data?.loss !== undefined && (
-              <span style={{ color: '#818cf8', marginLeft: 8 }}>loss={e.data.loss.toFixed(4)}</span>
+              <span style={{ color: 'var(--accent-soft)', marginLeft: 8 }}>loss={e.data.loss.toFixed(4)}</span>
             )}
           </div>
         ))}

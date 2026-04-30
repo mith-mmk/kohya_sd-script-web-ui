@@ -1,4 +1,4 @@
-import type { TrainJob, TrainJobInput, PreprocessOptions, LoRAProfile, LogEvent, PromptListResponse, AdvancedSettingsProfile } from '../types/job.js';
+import type { TrainJob, TrainJobInput, PreprocessOptions, LoRAProfile, LogEvent, PromptListResponse, AdvancedSettingsProfile, TrainParams } from '../types/job.js';
 
 const BASE = '/api';
 
@@ -25,9 +25,17 @@ export const api = {
   stopJob: (id: string) => req<{ ok: boolean }>(`${BASE}/jobs/${id}/stop`, { method: 'POST' }),
   deleteJob: (id: string) => req<{ ok: boolean }>(`${BASE}/jobs/${id}`, { method: 'DELETE' }),
   resumeJob: (id: string) => req<{ ok: boolean }>(`${BASE}/jobs/${id}/resume`, { method: 'POST' }),
+  continueJob: (id: string) => req<{ ok: boolean }>(`${BASE}/jobs/${id}/continue`, { method: 'POST' }),
+  updateJobParams: (id: string, params: Partial<TrainParams>) =>
+    req<TrainJob>(`${BASE}/jobs/${id}/params`, {
+      method: 'PATCH',
+      body: JSON.stringify({ params }),
+    }),
   listJobPrompts: (id: string) => req<PromptListResponse>(`${BASE}/jobs/${id}/prompts`),
   getJobPromptContent: (id: string, subset: string, relativePath: string) =>
     req<{ content: string; updatedAt: string }>(`${BASE}/jobs/${id}/prompts/content?subset=${encodeURIComponent(subset)}&path=${encodeURIComponent(relativePath)}`),
+  getJobPromptImageUrl: (id: string, subset: string, relativePath: string) =>
+    `${BASE}/jobs/${id}/prompts/image?subset=${encodeURIComponent(subset)}&path=${encodeURIComponent(relativePath)}`,
   saveJobPromptContent: (id: string, subset: string, relativePath: string, content: string) =>
     req<{ ok: boolean; updatedAt: string }>(`${BASE}/jobs/${id}/prompts/content`, {
       method: 'PUT',

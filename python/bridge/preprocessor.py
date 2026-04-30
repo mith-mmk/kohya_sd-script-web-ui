@@ -29,7 +29,7 @@ _RELATIVE_DATASET_PATH_ERROR = (
 )
 _WD14_DEPENDENCY_ERROR = (
     "[preprocess] WD14 tagger requires Python modules that are not installed: {modules}. "
-    "Install `onnx` and `onnxruntime-gpu` (or `onnxruntime` for CPU-only environments), "
+    "Install `huggingface_hub`, `onnx` and `onnxruntime-gpu` (or `onnxruntime` for CPU-only environments), "
     "then retry preprocessing."
 )
 
@@ -164,7 +164,8 @@ def _normalize_subset_images(src_dir: str, dst_dir: str, normalized_format: str)
     normalized_format = normalized_format.lower().strip()
 
     if normalized_format == "copy":
-        return _prepare_effective_subset_dir(src_dir, dst_dir)
+        _prepare_effective_subset_dir(src_dir, dst_dir)
+        return len(_iter_image_files(dst_dir))
 
     try:
         from PIL import Image
@@ -187,7 +188,8 @@ def _normalize_subset_images(src_dir: str, dst_dir: str, normalized_format: str)
                 image.save(dst_path)
         else:
             _link_or_copy_file(src_path, dst_path)
-        normalized_count += 1
+        if dst_path.suffix.lower() in _IMAGE_EXTENSIONS:
+            normalized_count += 1
 
     return normalized_count
 
@@ -330,7 +332,7 @@ def run_preprocessing(config: dict[str, Any]) -> bool:
         # Step 2: WD14 tagger
         if run_wd14:
             missing_modules = _get_missing_python_modules(
-                python, ["onnx", "onnxruntime"], cwd=sd_dir
+                python, ["accelerate", "huggingface_hub", "onnx", "onnxruntime"], cwd=sd_dir
             )
             if missing_modules:
                 error(_WD14_DEPENDENCY_ERROR.format(modules=", ".join(missing_modules)))

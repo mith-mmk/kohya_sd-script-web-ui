@@ -5,6 +5,7 @@
   "main": "dist/main.js",
   "scripts": {
     "dev": "tsc && cross-env NODE_ENV=development electron dist/main.js",
+    "start": "cross-env NODE_ENV=production electron dist/main.js",
     "build": "tsc",
     "package": "electron-builder"
   },
@@ -20,15 +21,16 @@
   "build": {
     "appId": "com.kohya.lora-builder",
     "productName": "Kohya LoRA Builder",
-    "files": ["dist/**/*"],
+    "files": ["dist/**/*", "assets/**/*"],
     "extraResources": [
+      { "from": "assets", "to": "assets" },
       { "from": "../server/dist", "to": "server/dist" },
       { "from": "../web/dist", "to": "web/dist" },
       { "from": "../../python", "to": "python" },
       { "from": "../../sd-scripts", "to": "sd-scripts" },
       { "from": "../../.venv", "to": ".venv" }
     ],
-    "win": { "target": "nsis" },
+    "win": { "target": "nsis", "icon": "assets/app-icon.ico" },
     "mac": { "target": "dmg" },
     "linux": { "target": "AppImage" }
   }

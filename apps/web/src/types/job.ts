@@ -74,6 +74,7 @@ export interface DatasetSubsetInput {
 export interface TrainJobInput {
   name: string;
   trainerType?: TrainerType;
+  pauseBeforeTraining?: boolean;
   modelType: ModelType;
   workBaseDir?: string;
   baseModelPath: string;
@@ -141,6 +142,7 @@ export interface TrainJob {
 export interface PromptFileEntry {
   id: string;
   relativePath: string;
+  imageRelativePath?: string;
   baseName: string;
   updatedAt: string;
   size: number;

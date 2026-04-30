@@ -151,6 +151,7 @@ class JobQueue {
       resumeFromStep: retryConfig?.resumeFromStep ?? job.manifest?.resumeFromStep ?? null,
       paramsOverride: retryConfig?.paramsOverride ?? null,
       retryTier: retryConfig?.tier ?? null,
+      pauseBeforeTraining: Boolean(normalizedInput.pauseBeforeTraining) && !retryConfig?.skipPause,
     };
     fs.writeFileSync(configPath, JSON.stringify(bridgeConfig, null, 2), 'utf-8');
     this.updateManifestStep(jobId, retryConfig?.resumeFromStep ?? 'image-normalize', 'running');
@@ -204,7 +205,11 @@ class JobQueue {
     const job = dbGetJob(jobId);
     if (!job || job.status === 'completed') return;
 
-    if (code === 0) {
+    if (code === 2) {
+      this.markStepsCompletedThrough(jobId, 'dataset-config');
+      dbUpdateJob(jobId, { status: 'paused', currentPhase: 'train', errorMessage: undefined });
+      this.sysLog(jobId, 'info', 'Paused before training. Review parameters and tags, then continue.');
+    } else if (code === 0) {
       this.updateManifestStep(jobId, 'train', 'completed');
       dbUpdateJob(jobId, { status: 'completed', currentPhase: 'done', completedAt: new Date().toISOString() });
       this.sysLog(jobId, 'info', `Job completed successfully`);
@@ -232,6 +237,14 @@ class JobQueue {
     const retryConfig = await this.buildRetryConfig(job, tier);
     this.sysLog(jobId, 'info', `Resuming with tier: ${tier}`);
     await this.startJob(jobId, retryConfig);
+  }
+
+  async continueJob(jobId: string): Promise<void> {
+    const job = dbGetJob(jobId);
+    if (!job) throw new Error(`Job ${jobId} not found`);
+    if (job.status !== 'paused') throw new Error(`Job ${jobId} is not paused`);
+    this.sysLog(jobId, 'info', 'Continuing from paused training gate');
+    await this.startJob(jobId, { tier: 'latest-state', resumeFromStep: 'train', skipPause: true });
   }
 
   private getNextRetryTier(job: TrainJob): RetryConfig['tier'] | null {
@@ -309,6 +322,17 @@ class JobQueue {
     return dbGetJob(jobId)!;
   }
 
+  updateParams(jobId: string, params: Partial<TrainParams>): TrainJob {
+    const job = dbGetJob(jobId);
+    if (!job) throw new Error(`Job ${jobId} not found`);
+    if (job.status === 'running') throw new Error('Cannot edit parameters while the job is running');
+    const nextParams = { ...job.params, ...params };
+    validateModelPaths(job.modelType, nextParams);
+    dbUpdateJob(jobId, { params: nextParams });
+    this.sysLog(jobId, 'info', 'Training parameters updated');
+    return dbGetJob(jobId)!;
+  }
+
   list(): TrainJob[] { return dbListJobs(); }
   get(id: string): TrainJob | null { return dbGetJob(id); }
 
@@ -325,6 +349,26 @@ class JobQueue {
     step.error = errorMessage;
     if (status === 'failed') manifest.resumeFromStep = stepId;
     if (status === 'completed' && manifest.resumeFromStep === stepId) manifest.resumeFromStep = undefined;
+    manifest.updatedAt = now;
+    dbUpsertWorkflowManifest(manifest);
+  }
+
+  private markStepsCompletedThrough(jobId: string, stepId: WorkflowStepId): void {
+    const job = dbGetJob(jobId);
+    const manifest = job?.manifest;
+    if (!manifest) return;
+    const targetIndex = manifest.steps.findIndex(item => item.id === stepId);
+    if (targetIndex < 0) return;
+    const now = new Date().toISOString();
+    manifest.steps.forEach((step, index) => {
+      if (index <= targetIndex && step.status !== 'skipped') {
+        step.status = 'completed';
+        step.startedAt = step.startedAt ?? now;
+        step.endedAt = step.endedAt ?? now;
+        step.error = undefined;
+      }
+    });
+    manifest.resumeFromStep = 'train';
     manifest.updatedAt = now;
     dbUpsertWorkflowManifest(manifest);
   }
@@ -362,6 +406,7 @@ function normalizeTrainJobInput(input: TrainJobInput): TrainJobInput {
   return {
     ...input,
     trainerType: input.trainerType ?? 'lora',
+    pauseBeforeTraining: Boolean(input.pauseBeforeTraining),
     name: input.name.trim(),
     baseModelPath: input.baseModelPath.trim(),
     datasetDir: primarySubset?.imageDir ?? fallbackDatasetDir,

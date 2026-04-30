@@ -92,16 +92,15 @@ def _resolve_dataset_subsets(config: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _get_effective_subset_dir(config: dict[str, Any], subset: dict[str, Any]) -> str:
     preprocess_opts = config.get("preprocessOptions", {}) or {}
-    managed_dir = os.path.join(
-        config["workDir"],
-        (
-            "resized"
-            if preprocess_opts.get("runResize", False)
-            and not preprocess_opts.get("skipPreprocessing", False)
-            else "prepared"
-        ),
-        subset["workKey"],
-    )
+    skip_preprocessing = preprocess_opts.get("skipPreprocessing", False)
+    if preprocess_opts.get("runResize", False) and not skip_preprocessing:
+        managed_root = "resized"
+    elif preprocess_opts.get("normalizeImages", True) and not skip_preprocessing:
+        managed_root = "normalized"
+    else:
+        managed_root = "prepared"
+
+    managed_dir = os.path.join(config["workDir"], managed_root, subset["workKey"])
     return managed_dir if os.path.isdir(managed_dir) else subset["imageDir"]
 
 
@@ -216,7 +215,7 @@ def main() -> None:
 
     # ── Phase 1: Preprocessing ────────────────────────────────────────────────
     resume_from_step = config.get("resumeFromStep")
-    if config.get("resume") and resume_from_step == "train":
+    if resume_from_step == "train":
         info("[phase:preprocess] Skipping preprocessing for training resume")
     else:
         info(f"[phase:preprocess] Starting preprocessing for job {job_id}")
@@ -232,6 +231,11 @@ def main() -> None:
             sys.exit(1)
 
         info("[phase:preprocess] Preprocessing complete")
+
+    if config.get("pauseBeforeTraining") and resume_from_step != "train":
+        info("[phase:preprocess] Pausing before training for parameter and tag review")
+        exit_event(2, "Paused before training")
+        sys.exit(2)
 
     # ── Phase 2: Training ─────────────────────────────────────────────────────
     info("[phase:train] Building training command")

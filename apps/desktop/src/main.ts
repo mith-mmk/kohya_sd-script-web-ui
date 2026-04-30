@@ -3,23 +3,23 @@ import { spawn, ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import http from 'http';
-import { pathToFileURL } from 'url';
 
-const SERVER_PORT = 3001;
-const SERVER_URL = `http://127.0.0.1:${SERVER_PORT}`;
 const IMAGE_FILE_RE = /\.(png|jpe?g|webp|bmp|gif)$/iu;
-// IS_DEV: true when NODE_ENV=development OR when running from the source tree
-// (i.e. not inside an asar/packaged app)
-const IS_DEV =
-  process.env['NODE_ENV'] === 'development' ||
-  !app.isPackaged;
+const USE_VITE_DEV_SERVER = process.env['NODE_ENV'] === 'development';
+const USE_SOURCE_TREE = !app.isPackaged;
 
-if (IS_DEV) {
+if (USE_SOURCE_TREE) {
   loadEnvFile(path.resolve(__dirname, '../../../.env'));
 }
 
 let mainWindow: BrowserWindow | null = null;
 let serverProcess: ChildProcess | null = null;
+
+function resolveAppIconPath(): string {
+  return USE_SOURCE_TREE
+    ? path.resolve(__dirname, '../assets/app-icon.png')
+    : path.join(process.resourcesPath, 'assets/app-icon.png');
+}
 
 type NativePreviewItem = {
   name: string;
@@ -52,12 +52,16 @@ async function showNativeOpenDialog(options: Electron.OpenDialogOptions): Promis
 }
 
 type RuntimePaths = {
+  nodeBin: string;
   serverEntry: string;
   sdScriptsDir: string;
   bridgeDir: string;
   pythonBin: string;
   dbPath: string;
   workBase: string;
+  host: string;
+  port: number;
+  serverUrl: string;
 };
 
 function loadEnvFile(envPath: string): void {
@@ -92,49 +96,69 @@ function getBundledPythonPath(baseDir: string): string {
 function resolveRuntimePaths(): RuntimePaths {
   const repoRoot = path.resolve(__dirname, '../../..');
   const userDataDir = app.getPath('userData');
+  const host = process.env['HOST'] ?? '127.0.0.1';
+  const port = getConfiguredPort();
+  const serverUrl = `http://${host}:${port}`;
 
   const serverEntry = process.env['SERVER_ENTRY'] ?? (
-    IS_DEV
+    USE_SOURCE_TREE
       ? path.join(__dirname, '../../server/dist/index.js')
       : path.join(process.resourcesPath, 'server/dist/index.js')
   );
+  const nodeBin = process.env['NODE_BIN'] ?? (
+    USE_SOURCE_TREE
+      ? 'node'
+      : path.join(process.resourcesPath, 'node', process.platform === 'win32' ? 'node.exe' : 'node')
+  );
 
   const sdScriptsDir = process.env['SD_SCRIPTS_DIR'] ?? (
-    IS_DEV
+    USE_SOURCE_TREE
       ? path.join(repoRoot, 'sd-scripts')
       : path.join(process.resourcesPath, 'sd-scripts')
   );
 
   const bridgeDir = process.env['BRIDGE_DIR'] ?? (
-    IS_DEV
+    USE_SOURCE_TREE
       ? path.join(repoRoot, 'python/bridge')
       : path.join(process.resourcesPath, 'python/bridge')
   );
 
   const pythonBin = process.env['PYTHON_BIN'] ?? (
-    IS_DEV
+    USE_SOURCE_TREE
       ? getBundledPythonPath(repoRoot)
       : getBundledPythonPath(process.resourcesPath)
   );
 
   const dbPath = process.env['DB_PATH'] ?? (
-    IS_DEV
+    USE_SOURCE_TREE
       ? path.join(repoRoot, 'data', 'kohya.db')
       : path.join(userDataDir, 'data', 'kohya.db')
   );
 
   const workBase = process.env['WORK_BASE'] ?? (
-    IS_DEV
+    USE_SOURCE_TREE
       ? path.join(repoRoot, 'work')
       : path.join(userDataDir, 'work')
   );
 
-  return { serverEntry, sdScriptsDir, bridgeDir, pythonBin, dbPath, workBase };
+  return { nodeBin, serverEntry, sdScriptsDir, bridgeDir, pythonBin, dbPath, workBase, host, port, serverUrl };
+}
+
+function getConfiguredPort(): number {
+  const rawPort = process.env['PORT'] ?? '3001';
+  const port = Number(rawPort);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid PORT: ${rawPort}`);
+  }
+  return port;
 }
 
 function assertRuntimePaths(runtimePaths: RuntimePaths): void {
   const missing: string[] = [];
 
+  if (!runtimePaths.nodeBin || (path.isAbsolute(runtimePaths.nodeBin) && !fs.existsSync(runtimePaths.nodeBin))) {
+    missing.push(`node runtime: ${runtimePaths.nodeBin}`);
+  }
   if (!fs.existsSync(runtimePaths.serverEntry)) missing.push(`server entry: ${runtimePaths.serverEntry}`);
   if (!fs.existsSync(runtimePaths.sdScriptsDir)) missing.push(`sd-scripts dir: ${runtimePaths.sdScriptsDir}`);
   if (!fs.existsSync(runtimePaths.bridgeDir)) missing.push(`bridge dir: ${runtimePaths.bridgeDir}`);
@@ -198,11 +222,12 @@ function startServer(): Promise<void> {
     fs.mkdirSync(path.dirname(runtimePaths.dbPath), { recursive: true });
     fs.mkdirSync(runtimePaths.workBase, { recursive: true });
 
-    serverProcess = spawn(process.execPath, [runtimePaths.serverEntry], {
+    serverProcess = spawn(runtimePaths.nodeBin, [runtimePaths.serverEntry], {
       env: {
         ...process.env,
-        NODE_ENV: IS_DEV ? 'development' : 'production',
-        PORT: String(SERVER_PORT),
+        NODE_ENV: USE_VITE_DEV_SERVER ? 'development' : 'production',
+        HOST: runtimePaths.host,
+        PORT: String(runtimePaths.port),
         DB_PATH: runtimePaths.dbPath,
         WORK_BASE: runtimePaths.workBase,
         PYTHON_BIN: runtimePaths.pythonBin,
@@ -220,22 +245,45 @@ function startServer(): Promise<void> {
 
     serverProcess.stderr?.on('data', (d: Buffer) => console.error('[server-err]', d.toString().trim()));
     serverProcess.on('error', reject);
+    serverProcess.on('exit', code => {
+      reject(new Error(`Server process exited before startup completed: ${code ?? 'unknown'}`));
+    });
     setTimeout(resolve, 5000); // fallback: assume ready after 5s
   });
 }
 
 // ── Poll until server responds ────────────────────────────────────────────────
-function waitForServer(maxWaitMs = 15_000): Promise<void> {
+function waitForServer(serverUrl: string, maxWaitMs = 30_000): Promise<void> {
   return new Promise((resolve, reject) => {
     const start = Date.now();
+    let lastError = 'no response yet';
     const check = () => {
-      http.get(`${SERVER_URL}/api/jobs`, res => {
-        if (res.statusCode === 200) resolve();
-        else retry();
-      }).on('error', retry);
+      http.get(`${serverUrl}/api/jobs`, res => {
+        const chunks: Buffer[] = [];
+        res.on('data', chunk => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+        res.on('end', () => {
+          const body = Buffer.concat(chunks).toString('utf-8').slice(0, 500);
+          if (res.statusCode === 200) {
+            resolve();
+            return;
+          }
+          lastError = `HTTP ${res.statusCode ?? 'unknown'} ${body}`;
+          retry();
+        });
+        res.on('error', err => {
+          lastError = err.message;
+          retry();
+        });
+      }).on('error', err => {
+        lastError = err.message;
+        retry();
+      });
     };
     const retry = () => {
-      if (Date.now() - start > maxWaitMs) { reject(new Error('Server did not start')); return; }
+      if (Date.now() - start > maxWaitMs) {
+        reject(new Error(`Server did not start: ${lastError}`));
+        return;
+      }
       setTimeout(check, 500);
     };
     check();
@@ -250,7 +298,8 @@ function createWindow(): void {
     minWidth: 900,
     minHeight: 600,
     title: 'Kohya LoRA Builder',
-    backgroundColor: '#0f0f0f',
+    backgroundColor: '#0f1115',
+    icon: resolveAppIconPath(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -258,10 +307,11 @@ function createWindow(): void {
     },
   });
 
-  const webUrl = IS_DEV ? 'http://localhost:5173' : SERVER_URL;
+  const runtimePaths = resolveRuntimePaths();
+  const webUrl = USE_VITE_DEV_SERVER ? 'http://localhost:5173' : runtimePaths.serverUrl;
   mainWindow.loadURL(webUrl);
 
-  if (IS_DEV) mainWindow.webContents.openDevTools();
+  if (USE_VITE_DEV_SERVER) mainWindow.webContents.openDevTools();
 
   // Open external links in OS browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -275,8 +325,9 @@ function createWindow(): void {
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
   try {
+    const runtimePaths = resolveRuntimePaths();
     await startServer();
-    await waitForServer();
+    await waitForServer(runtimePaths.serverUrl);
     createWindow();
   } catch (err) {
     console.error('Failed to start server:', err);

@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "concurrently \"npm run dev -w apps/server\" \"npm run dev -w apps/web\"",
     "dev:all": "concurrently \"npm run dev -w apps/server\" \"npm run dev -w apps/web\" \"npm run dev -w apps/desktop\"",
-    "desktop": "npm run build && npm run dev -w apps/desktop",
+    "desktop": "npm run start -w apps/desktop",
     "build": "npm run build -w apps/server && npm run build -w apps/web",
     "build:all": "npm run build && npm run build -w apps/desktop",
     "package:desktop": "npm run build:all && npm run package -w apps/desktop"

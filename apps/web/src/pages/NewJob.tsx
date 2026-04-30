@@ -19,6 +19,7 @@ const MODEL_REQUIRED_OVERRIDE_FIELDS: Partial<Record<ModelType, Array<keyof Trai
 const INITIAL_TRAIN_INPUT: TrainJobInput = {
   name: '',
   trainerType: 'lora',
+  pauseBeforeTraining: true,
   modelType: 'sdxl',
   workBaseDir: '',
   baseModelPath: '',
@@ -95,42 +96,42 @@ type PathHistoryKey =
 const S: Record<string, React.CSSProperties> = {
   h1: { fontSize: 20, fontWeight: 700, marginBottom: 24 },
   form: { maxWidth: 680, display: 'flex', flexDirection: 'column', gap: 20 },
-  section: { background: '#1a1a1a', borderRadius: 8, padding: '16px 20px', border: '1px solid #2a2a2a' },
-  sectionTitle: { fontSize: 13, fontWeight: 700, color: '#a78bfa', marginBottom: 14, textTransform: 'uppercase', letterSpacing: 1 },
+  section: { background: 'var(--panel)', borderRadius: 8, padding: '16px 20px', border: '1px solid var(--border)' },
+  sectionTitle: { fontSize: 13, fontWeight: 700, color: 'var(--accent-soft)', marginBottom: 14, textTransform: 'uppercase', letterSpacing: 1 },
   topActions: { display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' },
   row: { display: 'flex', flexDirection: 'column', gap: 4 },
-  label: { fontSize: 12, color: '#888' },
-  input: { background: '#0f0f0f', border: '1px solid #333', borderRadius: 6, color: '#e0e0e0', padding: '7px 10px', fontSize: 13, flex: 1 },
+  label: { fontSize: 12, color: 'var(--muted)' },
+  input: { background: 'var(--panel-muted)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', padding: '7px 10px', fontSize: 13, flex: 1 },
   inputRow: { display: 'flex', gap: 6 },
-  browseBtn: { background: '#2a2a2a', color: '#aaa', border: '1px solid #444', borderRadius: 6, padding: '7px 12px', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' },
-  select: { background: '#0f0f0f', border: '1px solid #333', borderRadius: 6, color: '#e0e0e0', padding: '7px 10px', fontSize: 13, width: '100%' },
+  browseBtn: { background: 'var(--panel-muted)', color: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 6, padding: '7px 12px', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' },
+  select: { background: 'var(--panel-muted)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', padding: '7px 10px', fontSize: 13, width: '100%' },
   grid2: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 },
-  summary: { fontSize: 12, color: '#a78bfa', cursor: 'pointer', userSelect: 'none' },
+  summary: { fontSize: 12, color: 'var(--accent-soft)', cursor: 'pointer', userSelect: 'none' },
   checkRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 },
   sectionActions: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 14 },
   historyActions: { display: 'flex', gap: 8, flexWrap: 'wrap' },
-  actionBtn: { background: '#243b53', color: '#dbeafe', border: '1px solid #34567a', borderRadius: 6, padding: '6px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 600 },
-  removeBtn: { background: '#3b1a1a', color: '#fecaca', border: '1px solid #7f1d1d', borderRadius: 6, padding: '6px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 600 },
+  actionBtn: { background: 'var(--accent)', color: '#fff', border: '1px solid var(--accent)', borderRadius: 6, padding: '6px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 600 },
+  removeBtn: { background: 'var(--danger-bg)', color: 'var(--danger-text)', border: '1px solid var(--danger-border)', borderRadius: 6, padding: '6px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 600 },
   historyList: { display: 'flex', flexDirection: 'column', gap: 10 },
-  historyCard: { background: '#141414', border: '1px solid #252525', borderRadius: 8, padding: '12px 14px', display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'center' },
-  historyTitle: { fontSize: 13, fontWeight: 700, color: '#e5e7eb', marginBottom: 4 },
-  historyMeta: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 6, fontSize: 12, color: '#777', minWidth: 360 },
+  historyCard: { background: 'var(--panel-muted)', border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px', display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'center' },
+  historyTitle: { fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 4 },
+  historyMeta: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 6, fontSize: 12, color: 'var(--faint)', minWidth: 360 },
   historyButtons: { display: 'flex', gap: 8, flexShrink: 0 },
   pathSuggestionRow: { display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 },
-  pathSuggestionBtn: { background: '#171717', color: '#9ca3af', border: '1px solid #333', borderRadius: 999, padding: '4px 10px', cursor: 'pointer', fontSize: 11, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  subsetCard: { background: '#141414', border: '1px solid #252525', borderRadius: 8, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 },
+  pathSuggestionBtn: { background: 'var(--panel-muted)', color: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 999, padding: '4px 10px', cursor: 'pointer', fontSize: 11, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  subsetCard: { background: 'var(--panel-muted)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 },
   subsetHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
-  subsetTitle: { fontSize: 13, fontWeight: 700, color: '#e5e7eb' },
-  previewWrap: { background: '#141414', border: '1px solid #242424', borderRadius: 8, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 },
-  previewTitle: { fontSize: 12, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700 },
-  previewMeta: { fontSize: 12, color: '#777' },
+  subsetTitle: { fontSize: 13, fontWeight: 700, color: 'var(--text)' },
+  previewWrap: { background: 'var(--panel-muted)', border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 },
+  previewTitle: { fontSize: 12, color: 'var(--accent-soft)', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700 },
+  previewMeta: { fontSize: 12, color: 'var(--faint)' },
   previewGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(92px, 1fr))', gap: 10 },
   previewCard: { display: 'flex', flexDirection: 'column', gap: 6 },
-  previewImage: { width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', borderRadius: 6, border: '1px solid #333', background: '#0f0f0f' },
-  previewName: { fontSize: 11, color: '#999', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
-  hint: { fontSize: 12, color: '#666', lineHeight: 1.6 },
-  submitBtn: { background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 24px', cursor: 'pointer', fontSize: 14, fontWeight: 600 },
-  error: { background: '#3b0404', border: '1px solid #7f1d1d', borderRadius: 6, padding: '10px 14px', color: '#fca5a5', fontSize: 13 },
+  previewImage: { width: '100%', aspectRatio: '1 / 1', objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--panel-muted)' },
+  previewName: { fontSize: 11, color: 'var(--faint)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  hint: { fontSize: 12, color: 'var(--faint)', lineHeight: 1.6 },
+  submitBtn: { background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 24px', cursor: 'pointer', fontSize: 14, fontWeight: 600 },
+  error: { background: 'var(--danger-bg)', border: '1px solid var(--danger-border)', borderRadius: 6, padding: '10px 14px', color: 'var(--danger-text)', fontSize: 13 },
 };
 
 function createSubsetId(): string {
@@ -234,6 +235,7 @@ function normalizeDraftInput(input: TrainJobInput): TrainJobInput {
     ...INITIAL_TRAIN_INPUT,
     ...input,
     name: input.name?.trim() ?? '',
+    pauseBeforeTraining: Boolean(input.pauseBeforeTraining),
     modelType: input.modelType,
     baseModelPath: input.baseModelPath?.trim() ?? '',
     datasetDir: primarySubset?.imageDir ?? input.datasetDir?.trim() ?? '',
@@ -776,6 +778,14 @@ export default function NewJob() {
               <label style={S.label}>{t.fieldJobName}</label>
               <input style={S.input} placeholder={t.fieldJobNamePlaceholder} {...inp('name')} />
             </div>
+            <label style={S.checkRow}>
+              <input
+                type="checkbox"
+                checked={input.pauseBeforeTraining !== false}
+                onChange={e => setInput(current => ({ ...current, pauseBeforeTraining: e.target.checked }))}
+              />
+              前処理後、学習開始前に確認で停止する
+            </label>
             <div style={S.grid2}>
               <div style={S.row}>
                 <label style={S.label}>{t.fieldModelType}</label>
@@ -1197,3 +1207,4 @@ export default function NewJob() {
     </div>
   );
 }
+

@@ -97,11 +97,15 @@ function Install-OnnxRuntimePackages {
     [bool]$PreferGpu
   )
 
-  Write-Step "      ONNX / ONNX Runtime をインストール中..."
+  Write-Step "      Hugging Face Hub / ONNX / ONNX Runtime をインストール中..."
+  & $PipExe install huggingface_hub --quiet
+  if ($LASTEXITCODE -ne 0) {
+    Write-Fail "huggingface_hub のインストールに失敗しました。"
+  }
   if ($PreferGpu) {
     & $PipExe install onnx onnxruntime-gpu --quiet
     if ($LASTEXITCODE -eq 0) {
-      Write-Ok "onnx / onnxruntime-gpu インストール完了。"
+      Write-Ok "huggingface_hub / onnx / onnxruntime-gpu インストール完了。"
       return
     }
     Write-Warn "onnxruntime-gpu のインストールに失敗したため、CPU 版へフォールバックします。"
@@ -111,7 +115,7 @@ function Install-OnnxRuntimePackages {
   if ($LASTEXITCODE -ne 0) {
     Write-Fail "onnx / onnxruntime のインストールに失敗しました。"
   }
-  Write-Ok "onnx / onnxruntime インストール完了。"
+  Write-Ok "huggingface_hub / onnx / onnxruntime インストール完了。"
 }
 
 # ── 作業ディレクトリをスクリプトのある場所に固定 ─────────────────
@@ -319,6 +323,7 @@ Write-Host "  インストール完了！" -ForegroundColor Green
 Write-Host ""
 Write-Host "  起動方法:" -ForegroundColor White
 Write-Host "    1クリック起動: .\start-desktop.bat" -ForegroundColor Gray
+Write-Host "    PORT指定起動: .\start-desktop.bat 3002" -ForegroundColor Gray
 Write-Host "    開発モード  : npm run dev" -ForegroundColor Gray
 Write-Host "    GUI起動     : npm run desktop" -ForegroundColor Gray
 Write-Host "    本番ビルド  : npm run build" -ForegroundColor Gray

@@ -113,6 +113,7 @@ export const defaultPreprocessOptions: PreprocessOptions = {
 export interface TrainJobInput {
   name: string;
   trainerType?: TrainerType;
+  pauseBeforeTraining?: boolean;
   modelType: ModelType;
   workBaseDir?: string;
   baseModelPath: string;
@@ -214,6 +215,7 @@ export interface RetryConfig {
   stateDir?: string;
   resumeFromStep?: WorkflowStepId;
   paramsOverride?: Partial<TrainParams>;
+  skipPause?: boolean;
 }
 
 /** Conservative parameter overrides applied at tier 3 */
